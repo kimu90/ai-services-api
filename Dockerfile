@@ -3,3 +3,9 @@ FROM python:3.13
 RUN apt update
 RUN pip install --upgrade pip
 RUN pip install poetry
+RUN poetry config virtualenvs.create false
+
+COPY pyproject.toml poetry.lock ./
+RUN poetry install
+
+COPY . .
