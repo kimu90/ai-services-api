@@ -1,7 +1,9 @@
 version: '3.9'
 
 x-rusha-common: &rusha-common
-  image: $RUSHA_IMAGE
+  build:
+    context: .
+    dockerfile: Dockerfile
   volumes: &rusha-common-volumes
     - ./:/code
   working_dir: /code
