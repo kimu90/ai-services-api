@@ -1,0 +1,67 @@
+version: '3.9'
+
+x-rusha-common: &rusha-common
+  image: $RUSHA_IMAGE
+  volumes: &rusha-common-volumes
+    - ./:/code
+  working_dir: /code
+  environment: &rusha-common-env
+    POSTGRES_PASSWORD: "rusha"
+    POSTGRES_USER: "rusha"
+    POSTGRES_DB: "rusha"
+    POSTGRES_HOST: "postgresdb"
+    POSTGRES_PORT: "5432"
+    REDIS_HOST: "rusha-redis"
+    REDIS_PORT: "6379"
+    DEBUG: "True"
+
+services:
+  api:
+    <<: *rusha-common
+    ports:
+      - "8000:8000"
+    entrypoint: bash -c "uvicorn rusha_api.app:app --reload --host 0.0.0.0 --port 8000"
+    container_name: api-standalone
+    depends_on:
+      - postgresdb
+      - redis
+
+  redis:
+    image: redis:latest
+    container_name: redis-api-standalone
+    hostname: rusha-redis
+    restart: always
+    ports:
+      - "6379:6379"
+    volumes:
+      - ./redis-data:/data
+
+
+  postgresdb:
+    image: postgres:15.3-alpine
+    restart: always
+    container_name: postgresdb-api-standalone
+    environment:
+      POSTGRES_PASSWORD: "rusha"
+      POSTGRES_USER: "rusha"
+      POSTGRES_DB: "rusha"
+    ports:
+      - "5432:5432"
+    volumes:
+      - ./postgres-data:/var/lib/postgresql/data
+
+  pgAdmin:
+    image: dpage/pgadmin4:latest
+    restart: always
+    container_name: pgadmin-api-standalone
+    environment:
+      PGADMIN_DEFAULT_EMAIL: 'test@test.com'
+      PGADMIN_DEFAULT_PASSWORD: '123456'
+    ports:
+      - 5050:80
+    depends_on:
+      - postgresdb
+    volumes:
+      - ./pgadmin-data:/var/lib/pgadmin
+
+
