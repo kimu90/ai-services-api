@@ -1,70 +1,42 @@
 version: '3.9'
 
-x-rusha-common: &rusha-common
+x-aphrc-common: &aphrc-common
   build:
     context: .
-    dockerfile: Dockerfile
-  volumes: &rusha-common-volumes
+    dockerfile: Dockerfile  # Make sure your Dockerfile is set to use Python 3.11
+  volumes: &aphrc-common-volumes
     - ./:/code
   working_dir: /code
-  environment: &rusha-common-env
-    POSTGRES_PASSWORD: "rusha"
-    POSTGRES_USER: "rusha"
-    POSTGRES_DB: "rusha"
-    POSTGRES_HOST: "postgresdb"
-    POSTGRES_PORT: "5432"
-    REDIS_HOST: "rusha-redis"
+  environment: &aphrc-common-env
+    REDIS_HOST: "redis"  # Update to service name for Redis connection
     REDIS_PORT: "6379"
     DEBUG: "True"
 
 services:
   api:
-    <<: *rusha-common
+    <<: *aphrc-common
     ports:
       - "8000:8000"
-    # entrypoint: bash -c "uvicorn ai_services_api.app:app --reload --host 0.0.0.0 --port 8000"
-    command: sleep infinity
+    command: uvicorn ai_services_api.main:app --host 0.0.0.0 --port 8000 --reload
     container_name: api-standalone
     depends_on:
-      - postgresdb
-      - redis
+      redis:  # Ensures the API waits for the Redis service
+        condition: service_healthy  # Wait until Redis is healthy
+    image: python:3.11 # Specify Python 3.11 as the base image
 
   redis:
     image: redis:latest
     container_name: redis-api-standalone
-    hostname: rusha-redis
+    hostname: aphrc-redis
     restart: always
     ports:
       - "6379:6379"
     volumes:
-      - ./redis-data:/data
-
-
-  postgresdb:
-    image: postgres:15.3-alpine
-    restart: always
-    container_name: postgresdb-api-standalone
-    environment:
-      POSTGRES_PASSWORD: "rusha"
-      POSTGRES_USER: "rusha"
-      POSTGRES_DB: "rusha"
-    ports:
-      - "5432:5432"
-    volumes:
-      - ./postgres-data:/var/lib/postgresql/data
-
-  pgAdmin:
-    image: dpage/pgadmin4:latest
-    restart: always
-    container_name: pgadmin-api-standalone
-    environment:
-      PGADMIN_DEFAULT_EMAIL: 'test@test.com'
-      PGADMIN_DEFAULT_PASSWORD: '123456'
-    ports:
-      - 5050:80
-    depends_on:
-      - postgresdb
-    volumes:
-      - ./pgadmin-data:/var/lib/pgadmin
-
-
+      - ./redis-data:/data           # For Redis data persistence
+      - ./redis.conf:/usr/local/etc/redis/redis.conf  # Mount your custom config file
+    command: ["redis-server", "/usr/local/etc/redis/redis.conf"]  # Specify the config file
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]  # Check if Redis is responsive
+      interval: 30s                        # Check every 30 seconds
+      timeout: 10s                         # Timeout for each check
+      retries: 3                           # Retry up to 3 times
