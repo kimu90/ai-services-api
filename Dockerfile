@@ -1,26 +1,22 @@
-FROM python:3.11
+# Base Python image
+FROM python:3.11-slim
 
-# Update and install necessary dependencies
-RUN apt update && \
-    apt install -y \
-    postgresql \
-    gcc \
-    redis-tools  # Add redis-tools for redis-cli
+# Install system dependencies
+RUN apt update && apt install -y gcc postgresql-client && rm -rf /var/lib/apt/lists/*
 
-# Upgrade pip to the latest version
-RUN pip install --upgrade pip
-
-# Install Poetry for dependency management
-RUN pip install poetry
-
-# Configure Poetry to not use virtual environments
-RUN poetry config virtualenvs.create false
-
-# Copy project files for Poetry
+# Copy project files
 COPY pyproject.toml poetry.lock ./
-
-# Install dependencies specified in the pyproject.toml and poetry.lock
-RUN poetry install
-
-# Copy the rest of the application code
 COPY . .
+
+# Install Poetry
+RUN pip install --upgrade pip && \
+    pip install poetry && \
+    poetry config virtualenvs.create false && \
+    poetry install --no-dev  # Only install necessary dependencies
+
+# Install torch (CPU-only) and sentence-transformers directly using pip
+RUN pip install --index-url https://download.pytorch.org/whl/cpu torch && \
+    pip install sentence-transformers
+
+# Command to run the application with Uvicorn
+CMD ["uvicorn", "ai_services_api.app:app", "--host", "0.0.0.0", "--port", "8000"]

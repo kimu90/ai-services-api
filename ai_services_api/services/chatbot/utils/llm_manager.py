@@ -31,7 +31,6 @@ class GeminiLLMManager:
         # Initialize Redis
         self.redis_client = redis.StrictRedis.from_url(self.redis_url, decode_responses=True)
 
-
     def query_redis_data(self, query_vector, top_n=3, threshold=0.5) -> List[str]:
         """Fetch multiple relevant data points from Redis based on the user query vector."""
         try:
@@ -110,8 +109,6 @@ class GeminiLLMManager:
             if len(response) >= max_response_length:
                 break  # Stop once you reach the max length
             yield f"{repr(token.content)}".encode("utf-8", errors="replace")
-
-        await self.add_conversation_to_memory(message, response)
 
     def format_response(self, response: str) -> str:
         """Format the response to remove newlines and make links clickable, while cleaning up Markdown."""

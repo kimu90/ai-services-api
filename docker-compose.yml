@@ -2,27 +2,26 @@ version: '3.9'
 
 x-aphrc-common: &aphrc-common
   build:
-    context: .
-    dockerfile: Dockerfile  # Make sure your Dockerfile is set to use Python 3.11
+    context: .  # Ensure the context points to the correct directory
+    dockerfile: Dockerfile  # Ensure Dockerfile uses Python 3.11 and sets up the environment
   volumes: &aphrc-common-volumes
     - ./:/code
   working_dir: /code
   environment: &aphrc-common-env
-    REDIS_HOST: "redis"  # Update to service name for Redis connection
-    REDIS_PORT: "6379"
+    REDIS_URL: "redis://redis:6379"  # Combined URL for Redis connection
     DEBUG: "True"
+    GEMINI_API_KEY: "${GEMINI_API_KEY}"  # Include your Gemini API key from .env file
 
 services:
   api:
     <<: *aphrc-common
     ports:
       - "8000:8000"
-    command: uvicorn ai_services_api.main:app --host 0.0.0.0 --port 8000 --reload
+    command: poetry run uvicorn ai_services_api.app:app --host 0.0.0.0 --port 8000
     container_name: api-standalone
     depends_on:
-      redis:  # Ensures the API waits for the Redis service
+      redis:
         condition: service_healthy  # Wait until Redis is healthy
-    image: python:3.11 # Specify Python 3.11 as the base image
 
   redis:
     image: redis:latest
@@ -36,7 +35,7 @@ services:
       - ./redis.conf:/usr/local/etc/redis/redis.conf  # Mount your custom config file
     command: ["redis-server", "/usr/local/etc/redis/redis.conf"]  # Specify the config file
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]  # Check if Redis is responsive
-      interval: 30s                        # Check every 30 seconds
-      timeout: 10s                         # Timeout for each check
-      retries: 3                           # Retry up to 3 times
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 120s
+      timeout: 40s
+      retries: 6  # Modify the retries as per your preference

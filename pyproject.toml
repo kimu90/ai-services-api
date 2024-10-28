@@ -3,7 +3,6 @@ name = "ai-api-services"
 version = "0.1.0"
 description = ""
 authors = ["kimu90 <briankimutai@icloud.com>"]
-readme = "README.md"
 
 [tool.poetry.dependencies]
 python = "^3.11"
@@ -15,9 +14,6 @@ langchain-google-genai = "2.0.1"
 pydantic = "^2.9.2"
 numpy = "1.26.4"
 uvicorn = "^0.32.0"
-sentence-transformers = "^3.0.0"
-aioredis = "^2.0.1"
-
 
 [build-system]
 requires = ["poetry-core"]
