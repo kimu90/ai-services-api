@@ -1,0 +1,213 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Research Recommendations</title>
+    <style>
+        :root {
+            --primary-color: #10B981;
+            --secondary-color: #059669;
+            --background-color: #111827;
+            --card-background: #1F2937;
+            --text-color: #F3F4F6;
+            --border-color: #374151;
+            --border-radius: 8px;
+            --box-shadow: 0 4px 6px rgba(0, 0, 0, 0.3);
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background-color: var(--background-color);
+            color: var(--text-color);
+            line-height: 1.6;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+
+        header {
+            text-align: center;
+            margin-bottom: 40px;
+            background-color: var(--card-background);
+            padding: 1rem;
+            border-radius: var(--border-radius);
+            border: 1px solid var(--border-color);
+        }
+
+        header h1 {
+            color: var(--primary-color);
+            font-size: 2.5em;
+            margin: 20px 0;
+        }
+
+        .search-section {
+            background-color: var(--card-background);
+            border-radius: var(--border-radius);
+            padding: 30px;
+            box-shadow: var(--box-shadow);
+            margin-bottom: 30px;
+            border: 1px solid var(--border-color);
+        }
+
+        .search-box {
+            max-width: 600px;
+            margin: 0 auto;
+        }
+
+        .search-box h2 {
+            margin-bottom: 20px;
+            color: var(--text-color);
+            text-align: center;
+        }
+
+        .input-group {
+            margin-bottom: 20px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        input {
+            width: 100%;
+            padding: 12px;
+            background-color: var(--background-color);
+            border: 1px solid var(--border-color);
+            border-radius: var(--border-radius);
+            font-size: 16px;
+            color: var(--text-color);
+        }
+
+        input::placeholder {
+            color: #6B7280;
+        }
+
+        .or {
+            font-weight: bold;
+            color: var(--text-color);
+        }
+
+        button {
+            width: 100%;
+            padding: 12px;
+            background-color: var(--primary-color);
+            color: white;
+            border: none;
+            border-radius: var(--border-radius);
+            cursor: pointer;
+            font-size: 16px;
+            transition: background-color 0.3s;
+        }
+
+        button:hover {
+            background-color: var(--secondary-color);
+        }
+
+        .loading {
+            text-align: center;
+            margin: 20px 0;
+            font-size: 18px;
+            color: var(--text-color);
+        }
+
+        .recommendations-list {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 20px;
+            padding: 20px 0;
+        }
+
+        .recommendation-card {
+            background-color: var(--card-background);
+            border-radius: var(--border-radius);
+            padding: 20px;
+            box-shadow: var(--box-shadow);
+            border: 1px solid var(--border-color);
+        }
+
+        .recommendation-card h3 {
+            color: var(--primary-color);
+            margin-bottom: 10px;
+            font-size: 1.2em;
+        }
+
+        .metrics {
+            display: flex;
+            justify-content: space-between;
+            margin: 10px 0;
+            font-size: 0.9em;
+            color: #9CA3AF;
+        }
+
+        .topics {
+            margin: 10px 0;
+            font-size: 0.9em;
+            color: #9CA3AF;
+        }
+
+        .work-id {
+            margin-top: 10px;
+            font-size: 0.8em;
+            color: #6B7280;
+        }
+
+        .error-message {
+            background-color: #991B1B;
+            color: white;
+            padding: 15px;
+            border-radius: var(--border-radius);
+            text-align: center;
+            margin: 20px 0;
+        }
+
+        footer {
+            text-align: center;
+            margin-top: 40px;
+            padding: 20px;
+            color: #6B7280;
+            background-color: var(--card-background);
+            border-radius: var(--border-radius);
+            border: 1px solid var(--border-color);
+        }
+
+        @media (max-width: 768px) {
+            .container {
+                padding: 10px;
+            }
+            
+            .recommendations-list {
+                grid-template-columns: 1fr;
+            }
+        }
+    </style>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/axios/1.6.0/axios.min.js"></script>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>Research Recommendations</h1>
+        </header>
+
+        <main>
+            <div class="search-section">
+                <div class="search-box">
+                    <h2>Get Recommendations</h2>
+                    <div class="input-group">
+                        <input type="text" id="authorId" placeholder="Enter Author ID">
+                        <span class="or">OR</span>
+                        <input type="text" id="workId" placeholder="Enter Work ID">
+                    </div>
+                    <div class="input-group">
+                        <input type="number" id="limit" placeholder="Number of recommendations" value="5">
+                    </div>
+                    <button onclick="getRecommendations()">Get Recommendations</button>
+                
