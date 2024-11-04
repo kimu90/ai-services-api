@@ -1,16 +1,19 @@
-version: '3.9'
-
 x-aphrc-common: &aphrc-common
   build:
-    context: .  # Ensure the context points to the correct directory
-    dockerfile: Dockerfile  # Ensure Dockerfile uses Python 3.11 and sets up the environment
+    context: .
+    dockerfile: Dockerfile
   volumes: &aphrc-common-volumes
     - ./:/code
   working_dir: /code
   environment: &aphrc-common-env
-    REDIS_URL: "redis://redis:6379"  # Combined URL for Redis connection
+    REDIS_URL: "redis://redis:6379"
+    REDIS_GRAPH_URL: "redis://redis-graph:6380"  # Added RedisGraph URL
     DEBUG: "True"
-    GEMINI_API_KEY: "${GEMINI_API_KEY}"  # Include your Gemini API key from .env file
+    GEMINI_API_KEY: "${GEMINI_API_KEY}"
+    POSTGRES_HOST: "postgres"
+    POSTGRES_DB: "${POSTGRES_DB:-aphrcdb}"
+    POSTGRES_USER: "${POSTGRES_USER:-aphrcuser}"
+    POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:-aphrcpass}"
 
 services:
   api:
@@ -21,21 +24,91 @@ services:
     container_name: api-standalone
     depends_on:
       redis:
-        condition: service_healthy  # Wait until Redis is healthy
+        condition: service_healthy
+      redis-graph:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+    networks:
+      - aphrc-network
 
   redis:
     image: redis:latest
-    container_name: redis-api-standalone
+    container_name: redis-standalone
     hostname: aphrc-redis
     restart: always
     ports:
       - "6379:6379"
     volumes:
-      - ./redis-data:/data           # For Redis data persistence
-      - ./redis.conf:/usr/local/etc/redis/redis.conf  # Mount your custom config file
-    command: ["redis-server", "/usr/local/etc/redis/redis.conf"]  # Specify the config file
+      - ./redis-data:/data
+      - ./redis.conf:/usr/local/etc/redis/redis.conf
+    command: ["redis-server", "/usr/local/etc/redis/redis.conf"]
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 120s
       timeout: 40s
-      retries: 6  # Modify the retries as per your preference
+      retries: 6
+    networks:
+      - aphrc-network
+
+  redis-graph:
+    image: redislabs/redisgraph:latest
+    container_name: redis-graph
+    hostname: aphrc-redis-graph
+    restart: always
+    ports:
+      - "6380:6379"
+    volumes:
+      - ./redis-graph-data:/data
+      - ./redis-graph.conf:/usr/local/etc/redis/redis.conf
+    command: ["redis-server", "/usr/local/etc/redis/redis.conf"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 120s
+      timeout: 40s
+      retries: 6
+    networks:
+      - aphrc-network
+
+  postgres:
+    image: postgres:15-alpine
+    container_name: postgres
+    restart: always
+    environment:
+      POSTGRES_DB: "${POSTGRES_DB:-aphrcdb}"
+      POSTGRES_USER: "${POSTGRES_USER:-aphrcuser}"
+      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:-aphrcpass}"
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-aphrcuser} -d ${POSTGRES_DB:-aphrcdb}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - aphrc-network
+
+  pgadmin:
+    image: dpage/pgadmin4
+    container_name: pgadmin
+    restart: always
+    environment:
+      PGADMIN_DEFAULT_EMAIL: "${PGADMIN_EMAIL:-admin@admin.com}"
+      PGADMIN_DEFAULT_PASSWORD: "${PGADMIN_PASSWORD:-admin}"
+    ports:
+      - "5050:80"
+    depends_on:
+      - postgres
+    networks:
+      - aphrc-network
+
+networks:
+  aphrc-network:
+    driver: bridge
+
+volumes:
+  postgres-data:
+  redis-data:
+  redis-graph-data:

@@ -1,264 +1,164 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <title>APHRC Virtual Assistant</title>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:400,700,300">
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/material-design-iconic-font/2.1.2/css/material-design-iconic-font.min.css">
-    <style>
-        /* Style adjustments for improved look */
-        body {
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            height: 100vh;
-            margin: 0;
-            background-color: #e0e7ff;
-            font-family: 'Roboto', sans-serif;
-        }
-
-        .botbody {
-            width: 100%;
-            max-width: 400px;
-            border: 1px solid #ccc;
-            border-radius: 15px;
-            background-color: #ffffff;
-            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.15);
-        }
-
-        #message-section {
-            display: flex;
-            flex-direction: column;
-            height: 300px;
-            overflow-y: auto;
-            padding: 15px;
-            border: 1px solid #ccc;
-            border-radius: 15px;
-            background-color: #f9f9f9;
-        }
-
-        .message {
-            margin: 10px 0;
-            max-width: 70%;
-            padding: 12px;
-            border-radius: 15px;
-            word-wrap: break-word;
-            font-size: 16px;
-        }
-
-        .user-message {
-            align-self: flex-end;
-            background-color: #dcf8c6;
-        }
-
-        .bot-message {
-            align-self: flex-start;
-            background-color: #ffffff;
-            border: 1px solid #ccc;
-        }
-
-        #input-section {
-            display: flex;
-            align-items: center;
-            margin-top: 10px;
-            padding: 10px;
-        }
-
-        input[type="text"] {
-            flex: 1;
-            padding: 12px;
-            border: 1px solid #ccc;
-            border-radius: 15px;
-            margin-right: 10px;
-            font-size: 16px;
-        }
-
-        .send {
-            background-color: #4CAF50;
-            color: white;
-            border: none;
-            border-radius: 15px;
-            padding: 12px;
-            cursor: pointer;
-            font-size: 16px;
-            transition: background-color 0.3s, transform 0.2s;
-        }
-
-        .send:hover {
-            background-color: #45a049;
-            transform: translateY(-2px);
-        }
-
-        /* Link styling */
-        #feedback-link {
-            display: block;
-            text-align: center;
-            margin-top: 15px;
-            color: #4CAF50;
-            cursor: pointer;
-            font-size: 16px;
-            text-decoration: underline;
-        }
-
-        /* Modal styling */
-        .feedback-modal {
-            display: none;
-            position: fixed;
-            top: 0;
-            left: 0;
-            width: 100%;
-            height: 100%;
-            background-color: rgba(0, 0, 0, 0.6);
-            justify-content: center;
-            align-items: center;
-            z-index: 1000;
-        }
-
-        .feedback-content {
-            background-color: #fff;
-            border-radius: 10px;
-            width: 90%;
-            max-width: 500px;
-            padding: 20px;
-            box-shadow: 0px 4px 10px rgba(0, 0, 0, 0.2);
-            position: relative;
-        }
-
-        .feedback-close {
-            position: absolute;
-            top: 10px;
-            right: 10px;
-            font-size: 24px;
-            cursor: pointer;
-            color: #333;
-        }
-
-        .feedback-content h1 {
-            font-size: 24px;
-            color: #333;
-        }
-
-        .feedback-content textarea {
-            width: 100%;
-            margin-top: 15px;
-            padding: 10px;
-            border-radius: 10px;
-            resize: none;
-        }
-
-        .feedback-content button {
-            margin-top: 10px;
-            background-color: #4CAF50;
-            color: white;
-            padding: 10px;
-            border: none;
-            border-radius: 10px;
-            cursor: pointer;
-        }
-
-        .feedback-content button:hover {
-            background-color: #45a049;
-        }
-    </style>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI Chatbot Assistant</title>
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/tailwindcss/2.2.19/tailwind.min.css" rel="stylesheet">
 </head>
-
-<body>
-    <div class="botbody">
-        <div id="message-section">
-            <div class="message bot-message" id="bot"><span>Hello.. How may I assist you?</span></div>
+<body class="bg-gray-900 min-h-screen">
+    <nav class="bg-gray-800 shadow-lg">
+        <div class="max-w-7xl mx-auto px-4">
+            <div class="flex justify-between h-16">
+                <div class="flex items-center">
+                    <span class="text-xl font-bold text-green-500">AI Services Platform</span>
+                </div>
+            </div>
         </div>
-        <div id="input-section">
-            <input id="user-input" type="text" placeholder="Type a message..." autocomplete="on" />
-            <button type="submit" class="send" onclick="sendMessage()">Send</button>
-        </div>
-        <a id="feedback-link" onclick="openFeedbackModal()">Give Feedback</a>
-    </div>
+    </nav>
 
-    <div class="feedback-modal" id="feedbackModal" onclick="closeFeedbackModal()">
-        <div class="feedback-content" onclick="event.stopPropagation()">
-            <span class="feedback-close" onclick="closeFeedbackModal()">&times;</span>
-            <h1>Sentiment Analysis</h1>
-            <form onsubmit="analyzeSentiment(event)">
-                <input type="text" id="feedback" placeholder="Enter your feedback..." />
-                <button type="submit">Submit Feedback</button>
+    <main class="max-w-7xl mx-auto py-12 px-4 flex justify-center">
+        <div class="w-full max-w-lg">
+            <div class="bg-gray-800 rounded-lg shadow-xl border border-gray-700 overflow-hidden">
+                <!-- Message Section -->
+                <div id="message-section" class="h-96 overflow-y-auto p-4 space-y-4">
+                    <div class="message bot-message bg-gray-700 text-gray-100 rounded-lg p-3 max-w-[80%] inline-block">
+                        <span>Hello.. How may I assist you?</span>
+                    </div>
+                </div>
+
+                <!-- Input Section -->
+                <div class="border-t border-gray-700 p-4 bg-gray-800">
+                    <div class="flex space-x-4">
+                        <input 
+                            id="user-input" 
+                            type="text" 
+                            placeholder="Type a message..." 
+                            class="flex-1 bg-gray-700 text-gray-100 rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-green-500 border border-gray-600"
+                            autocomplete="on"
+                        />
+                        <button 
+                            onclick="sendMessage()" 
+                            class="bg-green-500 hover:bg-green-600 text-white px-6 py-2 rounded-lg transition-colors duration-200"
+                        >
+                            Send
+                        </button>
+                    </div>
+                    <button 
+                        onclick="openFeedbackModal()" 
+                        class="text-green-500 hover:text-green-400 text-sm mt-2 transition-colors duration-200"
+                    >
+                        Give Feedback
+                    </button>
+                </div>
+            </div>
+        </div>
+    </main>
+
+    <!-- Feedback Modal -->
+    <div id="feedbackModal" class="fixed inset-0 bg-black bg-opacity-50 hidden items-center justify-center">
+        <div class="bg-gray-800 rounded-lg p-6 max-w-md w-full mx-4">
+            <div class="flex justify-between items-center mb-4">
+                <h2 class="text-xl font-bold text-gray-100">Sentiment Analysis</h2>
+                <button onclick="closeFeedbackModal()" class="text-gray-400 hover:text-gray-200">
+                    &times;
+                </button>
+            </div>
+            <form onsubmit="analyzeSentiment(event)" class="space-y-4">
+                <input 
+                    type="text" 
+                    id="feedback" 
+                    placeholder="Enter your feedback..." 
+                    class="w-full bg-gray-700 text-gray-100 rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-green-500 border border-gray-600"
+                />
+                <button 
+                    type="submit" 
+                    class="w-full bg-green-500 hover:bg-green-600 text-white py-2 rounded-lg transition-colors duration-200"
+                >
+                    Submit Feedback
+                </button>
             </form>
         </div>
     </div>
-    
-    
 
     <script>
         const feedbackModal = document.getElementById("feedbackModal");
-       
 
         async function sendMessage() {
             const userInput = document.getElementById("user-input").value;
-            if (!userInput) return; // Prevent sending empty messages
+            if (!userInput) return;
 
-            document.getElementById("user-input").value = ""; // Clear the input field immediately
+            document.getElementById("user-input").value = "";
 
-            // Show user message
             const messageSection = document.getElementById("message-section");
-            messageSection.innerHTML += `<div class="message user-message"><strong>You:</strong> <span>${userInput}</span></div>`;
+            messageSection.innerHTML += `
+                <div class="message user-message bg-green-500 text-white rounded-lg p-3 max-w-[80%] ml-auto">
+                    <span>${userInput}</span>
+                </div>
+            `;
 
-            // Send user input to the FastAPI backend
-            const response = await fetch("http://localhost:8000/conversation/", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ "query": userInput }),
-            });
+            try {
+                const response = await fetch("http://localhost:8000/conversation/", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ "query": userInput }),
+                });
 
-            if (!response.ok) {
-                console.error("Failed to fetch response from server");
-                messageSection.innerHTML += `<div class="message bot-message"><span>There was an error. Please try again.</span></div>`;
-                return;
+                if (!response.ok) {
+                    throw new Error("Failed to fetch response from server");
+                }
+
+                const botResponse = await response.json();
+                messageSection.innerHTML += `
+                    <div class="message bot-message bg-gray-700 text-gray-100 rounded-lg p-3 max-w-[80%] inline-block">
+                        <span>${botResponse.response}</span>
+                    </div>
+                `;
+            } catch (error) {
+                console.error("Error:", error);
+                messageSection.innerHTML += `
+                    <div class="message bot-message bg-red-500 text-white rounded-lg p-3 max-w-[80%] inline-block">
+                        <span>There was an error. Please try again.</span>
+                    </div>
+                `;
             }
-
-            const botResponse = await response.json();
-            messageSection.innerHTML += `<div class="message bot-message"><strong>Assistant:</strong> <span>${botResponse.response}</span></div>`;
 
             messageSection.scrollTop = messageSection.scrollHeight;
         }
 
         function openFeedbackModal() {
-            feedbackModal.style.display = "flex"; // Show modal
+            feedbackModal.style.display = "flex";
         }
 
         function closeFeedbackModal() {
-            feedbackModal.style.display = "none"; // Hide modal
-            feedbackText.value = ""; // Clear feedback text area
+            feedbackModal.style.display = "none";
+            document.getElementById("feedback").value = "";
         }
 
         async function analyzeSentiment(event) {
-    event.preventDefault(); // Prevent form submission
+            event.preventDefault();
+            const feedback = document.getElementById("feedback").value;
 
-    // Get the feedback value using getElementById
-    const feedback = document.getElementById("feedback").value;
+            try {
+                const response = await fetch("http://localhost:8000/sentiment/sentiment", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ "query": feedback })
+                });
 
-    try {
-        const response = await fetch("http://localhost:8000/sentiment/sentiment", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({"query": feedback })
-        });
+                if (response.ok) {
+                    const result = await response.json();
+                    alert(`Sentiment Analysis Result: ${result.sentiment}`);
+                } else {
+                    throw new Error("Error with sentiment analysis request");
+                }
+            } catch (error) {
+                console.error("Error:", error);
+                alert("Error with sentiment analysis. Please try again.");
+            }
 
-        if (response.ok) {
-            const result = await response.json();
-            alert(`Sentiment Analysis Result: ${result.sentiment}`);
-        } else {
-            console.error("Error with sentiment analysis request:", response.status);
-            alert("Error with sentiment analysis. Please try again.");
+            closeFeedbackModal();
         }
-    } catch (error) {
-        console.error("Network error:", error);
-        alert("Network error. Please check your connection.");
-    }
-
-    closeFeedbackModal();
-}
-
-
     </script>
 </body>
 </html>

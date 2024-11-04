@@ -1,8 +1,13 @@
 # Base Python image
 FROM python:3.11-slim
 
-# Install system dependencies
-RUN apt update && apt install -y gcc postgresql-client && rm -rf /var/lib/apt/lists/*
+# Install system dependencies including PostgreSQL client and build tools
+RUN apt-get update && apt-get install -y \
+    gcc \
+    postgresql-client \
+    libpq-dev \
+    python3-dev \
+    && rm -rf /var/lib/apt/lists/*
 
 # Copy project files
 COPY pyproject.toml poetry.lock ./
@@ -12,7 +17,7 @@ COPY . .
 RUN pip install --upgrade pip && \
     pip install poetry && \
     poetry config virtualenvs.create false && \
-    poetry install --no-dev  # Only install necessary dependencies
+    poetry install --no-dev
 
 # Install torch (CPU-only) and sentence-transformers directly using pip
 RUN pip install --index-url https://download.pytorch.org/whl/cpu torch && \
