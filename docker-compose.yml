@@ -7,7 +7,7 @@ x-aphrc-common: &aphrc-common
   working_dir: /code
   environment: &aphrc-common-env
     REDIS_URL: "redis://redis:6379"
-    REDIS_GRAPH_URL: "redis://redis-graph:6380"  # Added RedisGraph URL
+    REDIS_GRAPH_URL: "redis://redis-graph:6379"  
     DEBUG: "True"
     GEMINI_API_KEY: "${GEMINI_API_KEY}"
     POSTGRES_HOST: "postgres"
@@ -57,7 +57,7 @@ services:
     hostname: aphrc-redis-graph
     restart: always
     ports:
-      - "6380:6379"
+      - "6380:6379"  # Expose RedisGraph on port 6380
     volumes:
       - ./redis-graph-data:/data
       - ./redis-graph.conf:/usr/local/etc/redis/redis.conf

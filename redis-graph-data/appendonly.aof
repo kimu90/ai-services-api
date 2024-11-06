@@ -1,0 +1,1905 @@
+*2
+$6
+SELECT
+$1
+0
+*3
+$11
+GRAPH.QUERY
+$10
+test_graph
+$18
+CREATE (:TestNode)
+*2
+$6
+SELECT
+$1
+0
+*3
+$11
+GRAPH.QUERY
+$12
+expert_graph
+$150
+CYPHER orcid="https://orcid.org/0000-0001-7675-7956" name="I. Caballero" 
+        MERGE (e:Expert {orcid: $orcid})
+        SET e.name = $name
+        
+*3
+$11
+GRAPH.QUERY
+$12
+expert_graph
+$158
+CYPHER orcid="https://orcid.org/0000-0001-7266-0022" name="Kristina von Fieandt" 
+        MERGE (e:Expert {orcid: $orcid})
+        SET e.name = $name
+        
+*3
+$11
+GRAPH.QUERY
+$12
+expert_graph
+$151
+CYPHER orcid="https://orcid.org/0000-0001-6266-3342" name="Lisa Reinhart" 
+        MERGE (e:Expert {orcid: $orcid})
+        SET e.name = $name
+        
+*3
+$11
+GRAPH.QUERY
+$12
+expert_graph
+$160
+CYPHER orcid="https://orcid.org/0000-0003-2462-9471" name="Narongkorn Saiphoklang" 
+        MERGE (e:Expert {orcid: $orcid})
+        SET e.name = $name
+        
+*3
+$11
+GRAPH.QUERY
+$12
+expert_graph
+$148
+CYPHER orcid="https://orcid.org/0000-0002-2849-9961" name="Nada Ahmed" 
+        MERGE (e:Expert {orcid: $orcid})
+        SET e.name = $name
+        
+*3
+$11
+GRAPH.QUERY
+$12
+expert_graph
+$148
+CYPHER orcid="https://orcid.org/0000-0002-0119-3081" name="J.M. Kotze" 
+        MERGE (e:Expert {orcid: $orcid})
+        SET e.name = $name
+        
+*3
+$11
+GRAPH.QUERY
+$12
+expert_graph
+$152
+CYPHER orcid="https://orcid.org/0000-0001-7068-4530" name="Slimane Allali" 
+        MERGE (e:Expert {orcid: $orcid})
+        SET e.name = $name
+        
+*3
+$11
+GRAPH.QUERY
+$12
+expert_graph
+$148
+CYPHER orcid="https://orcid.org/0000-0001-9190-4651" name="Xuying Liu" 
+        MERGE (e:Expert {orcid: $orcid})
+        SET e.name = $name
+        
+*3
+$11
+GRAPH.QUERY
+$12
+expert_graph
+$150
+CYPHER orcid="https://orcid.org/0000-0002-1314-704X" name="Kelli Kaneta" 
+        MERGE (e:Expert {orcid: $orcid})
+        SET e.name = $name
+        
+*3
+$11
+GRAPH.QUERY
+$12
+expert_graph
+$149
+CYPHER orcid="https://orcid.org/0000-0002-3245-2218" name="Aman Wadhwa" 
+        MERGE (e:Expert {orcid: $orcid})
+        SET e.name = $name
+        
+*3
+$11
+GRAPH.QUERY
+$12
+expert_graph
+$149
+CYPHER orcid="https://orcid.org/0000-0001-9435-1431" name="Mridul Khan" 
+        MERGE (e:Expert {orcid: $orcid})
+        SET e.name = $name
+        
+*3
+$11
+GRAPH.QUERY
+$12
+expert_graph
+$160
+CYPHER orcid="https://orcid.org/0000-0003-0957-7618" name="А. Б. Пупышев" 
+        MERGE (e:Expert {orcid: $orcid})
+        SET e.name = $name
+        
+*3
+$11
+GRAPH.QUERY
+$12
+expert_graph
+$158
+CYPHER orcid="https://orcid.org/0000-0003-0102-076X" name="Amgalan Bayarsaikhan" 
+        MERGE (e:Expert {orcid: $orcid})
+        SET e.name = $name
+        
+*3
+$11
+GRAPH.QUERY
+$12
+expert_graph
+$147
+CYPHER orcid="https://orcid.org/0000-0002-1927-7072" name="Nico Marr" 
+        MERGE (e:Expert {orcid: $orcid})
+        SET e.name = $name
+        
+*3
+$11
+GRAPH.QUERY
+$12
+expert_graph
+$151
+CYPHER orcid="https://orcid.org/0000-0002-6405-5292" name="David A. Hunt" 
+        MERGE (e:Expert {orcid: $orcid})
+        SET e.name = $name
+        
+*3
+$11
+GRAPH.QUERY
+$12
+expert_graph
+$143
+CYPHER domain_id="https://openalex.org/C86803240" name="Biology" 
+        MERGE (d:Domain {id: $domain_id})
+        SET d.name = $name
+        
+*3
+$11
+GRAPH.QUERY
+$12
+expert_graph
+$226
+CYPHER orcid="https://orcid.org/0000-0002-1314-704X" domain_id="https://openalex.org/C86803240" 
+        MATCH (e:Expert {orcid: $orcid})
+        MATCH (d:Domain {id: $domain_id})
+        MERGE (e)-[r:RELATED_TO]->(d)
+        
+*3
+$11
+GRAPH.QUERY
+$12
+expert_graph
+$144
+CYPHER domain_id="https://openalex.org/C71924100" name="Medicine" 
+        MERGE (d:Domain {id: $domain_id})
+        SET d.name = $name
+        
+*3
+$11
+GRAPH.QUERY
+$12
+expert_graph
+$226
+CYPHER orcid="https://orcid.org/0000-0002-1314-704X" domain_id="https://openalex.org/C71924100" 
+        MATCH (e:Expert {orcid: $orcid})
+        MATCH (d:Domain {id: $domain_id})
+        MERGE (e)-[r:RELATED_TO]->(d)
+        
+*3
+$11
+GRAPH.QUERY
+$12
+expert_graph
+$146
+CYPHER domain_id="https://openalex.org/C15744967" name="Psychology" 
+        MERGE (d:Domain {id: $domain_id})
+        SET d.name = $name
+        
+*3
+$11
+GRAPH.QUERY
+$12
+expert_graph
+$226
+CYPHER orcid="https://orcid.org/0000-0002-1314-704X" domain_id="https://openalex.org/C15744967" 
+        MATCH (e:Expert {orcid: $orcid})
+        MATCH (d:Domain {id: $domain_id})
+        MERGE (e)-[r:RELATED_TO]->(d)
+        
+*3
+$11
+GRAPH.QUERY
+$12
+expert_graph
+$144
+CYPHER domain_id="https://openalex.org/C121332964" name="Physics" 
+        MERGE (d:Domain {id: $domain_id})
+        SET d.name = $name
+        
+*3
+$11
+GRAPH.QUERY
+$12
+expert_graph
+$227
+CYPHER orcid="https://orcid.org/0000-0002-1314-704X" domain_id="https://openalex.org/C121332964" 
+        MATCH (e:Expert {orcid: $orcid})
+        MATCH (d:Domain {id: $domain_id})
+        MERGE (e)-[r:RELATED_TO]->(d)
+        
+*3
+$11
+GRAPH.QUERY
+$12
+expert_graph
+$226
+CYPHER orcid="https://orcid.org/0000-0003-0102-076X" domain_id="https://openalex.org/C86803240" 
+        MATCH (e:Expert {orcid: $orcid})
+        MATCH (d:Domain {id: $domain_id})
+        MERGE (e)-[r:RELATED_TO]->(d)
+        
+*3
+$11
+GRAPH.QUERY
+$12
+expert_graph
+$146
+CYPHER domain_id="https://openalex.org/C144024400" name="Sociology" 
+        MERGE (d:Domain {id: $domain_id})
+        SET d.name = $name
+        
+*3
+$11
+GRAPH.QUERY
+$12
+expert_graph
+$227
+CYPHER orcid="https://orcid.org/0000-0003-0102-076X" domain_id="https://openalex.org/C144024400" 
+        MATCH (e:Expert {orcid: $orcid})
+        MATCH (d:Domain {id: $domain_id})
+        MERGE (e)-[r:RELATED_TO]->(d)
+        
+*3
+$11
+GRAPH.QUERY
+$12
+expert_graph
+$226
+CYPHER orcid="https://orcid.org/0000-0003-0102-076X" domain_id="https://openalex.org/C15744967" 
+        MATCH (e:Expert {orcid: $orcid})
+        MATCH (d:Domain {id: $domain_id})
+        MERGE (e)-[r:RELATED_TO]->(d)
+        
+*3
+$11
+GRAPH.QUERY
+$12
+expert_graph
+$227
+CYPHER orcid="https://orcid.org/0000-0003-0102-076X" domain_id="https://openalex.org/C121332964" 
+        MATCH (e:Expert {orcid: $orcid})
+        MATCH (d:Domain {id: $domain_id})
+        MERGE (e)-[r:RELATED_TO]->(d)
+        
+*3
+$11
+GRAPH.QUERY
+$12
+expert_graph
+$226
+CYPHER orcid="https://orcid.org/0000-0003-0102-076X" domain_id="https://openalex.org/C71924100" 
+        MATCH (e:Expert {orcid: $orcid})
+        MATCH (d:Domain {id: $domain_id})
+        MERGE (e)-[r:RELATED_TO]->(d)
+        
+*3
+$11
+GRAPH.QUERY
+$12
+expert_graph
+$539
+CYPHER orcid="https://orcid.org/0000-0003-0102-076X" 
+        MATCH (e1:Expert {orcid: $orcid})-[:RELATED_TO]->(d:Domain)<-[:RELATED_TO]-(e2:Expert)
+        WHERE e1 <> e2
+        WITH e1, e2, COUNT(d) as shared_domains
+        MATCH (e2)-[:RELATED_TO]->(d:Domain)
+        WITH e1, e2, shared_domains, COUNT(d) as total_domains
+        WITH e1, e2, shared_domains, total_domains,
+             (1.0 * shared_domains / total_domains) as similarity_score
+        MERGE (e1)-[s:SIMILAR_TO]->(e2)
+        SET s.score = similarity_score
+        
+*3
+$11
+GRAPH.QUERY
+$12
+expert_graph
+$154
+CYPHER domain_id="https://openalex.org/C192562407" name="Materials science" 
+        MERGE (d:Domain {id: $domain_id})
+        SET d.name = $name
+        
+*3
+$11
+GRAPH.QUERY
+$12
+expert_graph
+$227
+CYPHER orcid="https://orcid.org/0000-0001-7266-0022" domain_id="https://openalex.org/C192562407" 
+        MATCH (e:Expert {orcid: $orcid})
+        MATCH (d:Domain {id: $domain_id})
+        MERGE (e)-[r:RELATED_TO]->(d)
+        
+*3
+$11
+GRAPH.QUERY
+$12
+expert_graph
+$146
+CYPHER domain_id="https://openalex.org/C185592680" name="Chemistry" 
+        MERGE (d:Domain {id: $domain_id})
+        SET d.name = $name
+        
+*3
+$11
+GRAPH.QUERY
+$12
+expert_graph
+$227
+CYPHER orcid="https://orcid.org/0000-0001-7266-0022" domain_id="https://openalex.org/C185592680" 
+        MATCH (e:Expert {orcid: $orcid})
+        MATCH (d:Domain {id: $domain_id})
+        MERGE (e)-[r:RELATED_TO]->(d)
+        
+*3
+$11
+GRAPH.QUERY
+$12
+expert_graph
+$148
+CYPHER domain_id="https://openalex.org/C127413603" name="Engineering" 
+        MERGE (d:Domain {id: $domain_id})
+        SET d.name = $name
+        
+*3
+$11
+GRAPH.QUERY
+$12
+expert_graph
+$227
+CYPHER orcid="https://orcid.org/0000-0001-7266-0022" domain_id="https://openalex.org/C127413603" 
+        MATCH (e:Expert {orcid: $orcid})
+        MATCH (d:Domain {id: $domain_id})
+        MERGE (e)-[r:RELATED_TO]->(d)
+        
+*3
+$11
+GRAPH.QUERY
+$12
+expert_graph
+$144
+CYPHER domain_id="https://openalex.org/C127313418" name="Geology" 
+        MERGE (d:Domain {id: $domain_id})
+        SET d.name = $name
+        
+*3
+$11
+GRAPH.QUERY
+$12
+expert_graph
+$227
+CYPHER orcid="https://orcid.org/0000-0001-7266-0022" domain_id="https://openalex.org/C127313418" 
+        MATCH (e:Expert {orcid: $orcid})
+        MATCH (d:Domain {id: $domain_id})
+        MERGE (e)-[r:RELATED_TO]->(d)
+        
+*3
+$11
+GRAPH.QUERY
+$12
+expert_graph
+$227
+CYPHER orcid="https://orcid.org/0000-0001-7266-0022" domain_id="https://openalex.org/C121332964" 
+        MATCH (e:Expert {orcid: $orcid})
+        MATCH (d:Domain {id: $domain_id})
+        MERGE (e)-[r:RELATED_TO]->(d)
+        
+*3
+$11
+GRAPH.QUERY
+$12
+expert_graph
+$152
+CYPHER domain_id="https://openalex.org/C41008148" name="Computer science" 
+        MERGE (d:Domain {id: $domain_id})
+        SET d.name = $name
+        
+*3
+$11
+GRAPH.QUERY
+$12
+expert_graph
+$226
+CYPHER orcid="https://orcid.org/0000-0001-7266-0022" domain_id="https://openalex.org/C41008148" 
+        MATCH (e:Expert {orcid: $orcid})
+        MATCH (d:Domain {id: $domain_id})
+        MERGE (e)-[r:RELATED_TO]->(d)
+        
+*3
+$11
+GRAPH.QUERY
+$12
+expert_graph
+$147
+CYPHER domain_id="https://openalex.org/C33923547" name="Mathematics" 
+        MERGE (d:Domain {id: $domain_id})
+        SET d.name = $name
+        
+*3
+$11
+GRAPH.QUERY
+$12
+expert_graph
+$226
+CYPHER orcid="https://orcid.org/0000-0001-7266-0022" domain_id="https://openalex.org/C33923547" 
+        MATCH (e:Expert {orcid: $orcid})
+        MATCH (d:Domain {id: $domain_id})
+        MERGE (e)-[r:RELATED_TO]->(d)
+        
+*3
+$11
+GRAPH.QUERY
+$12
+expert_graph
+$539
+CYPHER orcid="https://orcid.org/0000-0001-7266-0022" 
+        MATCH (e1:Expert {orcid: $orcid})-[:RELATED_TO]->(d:Domain)<-[:RELATED_TO]-(e2:Expert)
+        WHERE e1 <> e2
+        WITH e1, e2, COUNT(d) as shared_domains
+        MATCH (e2)-[:RELATED_TO]->(d:Domain)
+        WITH e1, e2, shared_domains, COUNT(d) as total_domains
+        WITH e1, e2, shared_domains, total_domains,
+             (1.0 * shared_domains / total_domains) as similarity_score
+        MERGE (e1)-[s:SIMILAR_TO]->(e2)
+        SET s.score = similarity_score
+        
+*3
+$11
+GRAPH.QUERY
+$12
+expert_graph
+$227
+CYPHER orcid="https://orcid.org/0000-0001-9435-1431" domain_id="https://openalex.org/C192562407" 
+        MATCH (e:Expert {orcid: $orcid})
+        MATCH (d:Domain {id: $domain_id})
+        MERGE (e)-[r:RELATED_TO]->(d)
+        
+*3
+$11
+GRAPH.QUERY
+$12
+expert_graph
+$226
+CYPHER orcid="https://orcid.org/0000-0001-9435-1431" domain_id="https://openalex.org/C71924100" 
+        MATCH (e:Expert {orcid: $orcid})
+        MATCH (d:Domain {id: $domain_id})
+        MERGE (e)-[r:RELATED_TO]->(d)
+        
+*3
+$11
+GRAPH.QUERY
+$12
+expert_graph
+$227
+CYPHER orcid="https://orcid.org/0000-0001-9435-1431" domain_id="https://openalex.org/C127413603" 
+        MATCH (e:Expert {orcid: $orcid})
+        MATCH (d:Domain {id: $domain_id})
+        MERGE (e)-[r:RELATED_TO]->(d)
+        
+*3
+$11
+GRAPH.QUERY
+$12
+expert_graph
+$146
+CYPHER domain_id="https://openalex.org/C162324750" name="Economics" 
+        MERGE (d:Domain {id: $domain_id})
+        SET d.name = $name
+        
+*3
+$11
+GRAPH.QUERY
+$12
+expert_graph
+$227
+CYPHER orcid="https://orcid.org/0000-0001-9435-1431" domain_id="https://openalex.org/C162324750" 
+        MATCH (e:Expert {orcid: $orcid})
+        MATCH (d:Domain {id: $domain_id})
+        MERGE (e)-[r:RELATED_TO]->(d)
+        
+*3
+$11
+GRAPH.QUERY
+$12
+expert_graph
+$226
+CYPHER orcid="https://orcid.org/0000-0001-9435-1431" domain_id="https://openalex.org/C86803240" 
+        MATCH (e:Expert {orcid: $orcid})
+        MATCH (d:Domain {id: $domain_id})
+        MERGE (e)-[r:RELATED_TO]->(d)
+        
+*3
+$11
+GRAPH.QUERY
+$12
+expert_graph
+$227
+CYPHER orcid="https://orcid.org/0000-0001-9435-1431" domain_id="https://openalex.org/C127313418" 
+        MATCH (e:Expert {orcid: $orcid})
+        MATCH (d:Domain {id: $domain_id})
+        MERGE (e)-[r:RELATED_TO]->(d)
+        
+*3
+$11
+GRAPH.QUERY
+$12
+expert_graph
+$227
+CYPHER orcid="https://orcid.org/0000-0001-9435-1431" domain_id="https://openalex.org/C121332964" 
+        MATCH (e:Expert {orcid: $orcid})
+        MATCH (d:Domain {id: $domain_id})
+        MERGE (e)-[r:RELATED_TO]->(d)
+        
+*3
+$11
+GRAPH.QUERY
+$12
+expert_graph
+$226
+CYPHER orcid="https://orcid.org/0000-0001-9435-1431" domain_id="https://openalex.org/C41008148" 
+        MATCH (e:Expert {orcid: $orcid})
+        MATCH (d:Domain {id: $domain_id})
+        MERGE (e)-[r:RELATED_TO]->(d)
+        
+*3
+$11
+GRAPH.QUERY
+$12
+expert_graph
+$226
+CYPHER orcid="https://orcid.org/0000-0001-9435-1431" domain_id="https://openalex.org/C33923547" 
+        MATCH (e:Expert {orcid: $orcid})
+        MATCH (d:Domain {id: $domain_id})
+        MERGE (e)-[r:RELATED_TO]->(d)
+        
+*3
+$11
+GRAPH.QUERY
+$12
+expert_graph
+$146
+CYPHER domain_id="https://openalex.org/C205649164" name="Geography" 
+        MERGE (d:Domain {id: $domain_id})
+        SET d.name = $name
+        
+*3
+$11
+GRAPH.QUERY
+$12
+expert_graph
+$227
+CYPHER orcid="https://orcid.org/0000-0001-9435-1431" domain_id="https://openalex.org/C205649164" 
+        MATCH (e:Expert {orcid: $orcid})
+        MATCH (d:Domain {id: $domain_id})
+        MERGE (e)-[r:RELATED_TO]->(d)
+        
+*3
+$11
+GRAPH.QUERY
+$12
+expert_graph
+$147
+CYPHER domain_id="https://openalex.org/C138885662" name="Philosophy" 
+        MERGE (d:Domain {id: $domain_id})
+        SET d.name = $name
+        
+*3
+$11
+GRAPH.QUERY
+$12
+expert_graph
+$227
+CYPHER orcid="https://orcid.org/0000-0001-9435-1431" domain_id="https://openalex.org/C138885662" 
+        MATCH (e:Expert {orcid: $orcid})
+        MATCH (d:Domain {id: $domain_id})
+        MERGE (e)-[r:RELATED_TO]->(d)
+        
+*3
+$11
+GRAPH.QUERY
+$12
+expert_graph
+$539
+CYPHER orcid="https://orcid.org/0000-0001-9435-1431" 
+        MATCH (e1:Expert {orcid: $orcid})-[:RELATED_TO]->(d:Domain)<-[:RELATED_TO]-(e2:Expert)
+        WHERE e1 <> e2
+        WITH e1, e2, COUNT(d) as shared_domains
+        MATCH (e2)-[:RELATED_TO]->(d:Domain)
+        WITH e1, e2, shared_domains, COUNT(d) as total_domains
+        WITH e1, e2, shared_domains, total_domains,
+             (1.0 * shared_domains / total_domains) as similarity_score
+        MERGE (e1)-[s:SIMILAR_TO]->(e2)
+        SET s.score = similarity_score
+        
+*3
+$11
+GRAPH.QUERY
+$12
+expert_graph
+$227
+CYPHER orcid="https://orcid.org/0000-0003-0957-7618" domain_id="https://openalex.org/C185592680" 
+        MATCH (e:Expert {orcid: $orcid})
+        MATCH (d:Domain {id: $domain_id})
+        MERGE (e)-[r:RELATED_TO]->(d)
+        
+*3
+$11
+GRAPH.QUERY
+$12
+expert_graph
+$226
+CYPHER orcid="https://orcid.org/0000-0003-0957-7618" domain_id="https://openalex.org/C86803240" 
+        MATCH (e:Expert {orcid: $orcid})
+        MATCH (d:Domain {id: $domain_id})
+        MERGE (e)-[r:RELATED_TO]->(d)
+        
+*3
+$11
+GRAPH.QUERY
+$12
+expert_graph
+$227
+CYPHER orcid="https://orcid.org/0000-0003-0957-7618" domain_id="https://openalex.org/C127313418" 
+        MATCH (e:Expert {orcid: $orcid})
+        MATCH (d:Domain {id: $domain_id})
+        MERGE (e)-[r:RELATED_TO]->(d)
+        
+*3
+$11
+GRAPH.QUERY
+$12
+expert_graph
+$226
+CYPHER orcid="https://orcid.org/0000-0003-0957-7618" domain_id="https://openalex.org/C15744967" 
+        MATCH (e:Expert {orcid: $orcid})
+        MATCH (d:Domain {id: $domain_id})
+        MERGE (e)-[r:RELATED_TO]->(d)
+        
+*3
+$11
+GRAPH.QUERY
+$12
+expert_graph
+$227
+CYPHER orcid="https://orcid.org/0000-0003-0957-7618" domain_id="https://openalex.org/C121332964" 
+        MATCH (e:Expert {orcid: $orcid})
+        MATCH (d:Domain {id: $domain_id})
+        MERGE (e)-[r:RELATED_TO]->(d)
+        
+*3
+$11
+GRAPH.QUERY
+$12
+expert_graph
+$153
+CYPHER domain_id="https://openalex.org/C17744445" name="Political science" 
+        MERGE (d:Domain {id: $domain_id})
+        SET d.name = $name
+        
+*3
+$11
+GRAPH.QUERY
+$12
+expert_graph
+$226
+CYPHER orcid="https://orcid.org/0000-0003-0957-7618" domain_id="https://openalex.org/C17744445" 
+        MATCH (e:Expert {orcid: $orcid})
+        MATCH (d:Domain {id: $domain_id})
+        MERGE (e)-[r:RELATED_TO]->(d)
+        
+*3
+$11
+GRAPH.QUERY
+$12
+expert_graph
+$226
+CYPHER orcid="https://orcid.org/0000-0003-0957-7618" domain_id="https://openalex.org/C71924100" 
+        MATCH (e:Expert {orcid: $orcid})
+        MATCH (d:Domain {id: $domain_id})
+        MERGE (e)-[r:RELATED_TO]->(d)
+        
+*3
+$11
+GRAPH.QUERY
+$12
+expert_graph
+$539
+CYPHER orcid="https://orcid.org/0000-0003-0957-7618" 
+        MATCH (e1:Expert {orcid: $orcid})-[:RELATED_TO]->(d:Domain)<-[:RELATED_TO]-(e2:Expert)
+        WHERE e1 <> e2
+        WITH e1, e2, COUNT(d) as shared_domains
+        MATCH (e2)-[:RELATED_TO]->(d:Domain)
+        WITH e1, e2, shared_domains, COUNT(d) as total_domains
+        WITH e1, e2, shared_domains, total_domains,
+             (1.0 * shared_domains / total_domains) as similarity_score
+        MERGE (e1)-[s:SIMILAR_TO]->(e2)
+        SET s.score = similarity_score
+        
+*3
+$11
+GRAPH.QUERY
+$12
+expert_graph
+$227
+CYPHER orcid="https://orcid.org/0000-0002-3245-2218" domain_id="https://openalex.org/C192562407" 
+        MATCH (e:Expert {orcid: $orcid})
+        MATCH (d:Domain {id: $domain_id})
+        MERGE (e)-[r:RELATED_TO]->(d)
+        
+*3
+$11
+GRAPH.QUERY
+$12
+expert_graph
+$227
+CYPHER orcid="https://orcid.org/0000-0002-3245-2218" domain_id="https://openalex.org/C162324750" 
+        MATCH (e:Expert {orcid: $orcid})
+        MATCH (d:Domain {id: $domain_id})
+        MERGE (e)-[r:RELATED_TO]->(d)
+        
+*3
+$11
+GRAPH.QUERY
+$12
+expert_graph
+$226
+CYPHER orcid="https://orcid.org/0000-0002-3245-2218" domain_id="https://openalex.org/C86803240" 
+        MATCH (e:Expert {orcid: $orcid})
+        MATCH (d:Domain {id: $domain_id})
+        MERGE (e)-[r:RELATED_TO]->(d)
+        
+*3
+$11
+GRAPH.QUERY
+$12
+expert_graph
+$227
+CYPHER orcid="https://orcid.org/0000-0002-3245-2218" domain_id="https://openalex.org/C144024400" 
+        MATCH (e:Expert {orcid: $orcid})
+        MATCH (d:Domain {id: $domain_id})
+        MERGE (e)-[r:RELATED_TO]->(d)
+        
+*3
+$11
+GRAPH.QUERY
+$12
+expert_graph
+$226
+CYPHER orcid="https://orcid.org/0000-0002-3245-2218" domain_id="https://openalex.org/C15744967" 
+        MATCH (e:Expert {orcid: $orcid})
+        MATCH (d:Domain {id: $domain_id})
+        MERGE (e)-[r:RELATED_TO]->(d)
+        
+*3
+$11
+GRAPH.QUERY
+$12
+expert_graph
+$226
+CYPHER orcid="https://orcid.org/0000-0002-3245-2218" domain_id="https://openalex.org/C41008148" 
+        MATCH (e:Expert {orcid: $orcid})
+        MATCH (d:Domain {id: $domain_id})
+        MERGE (e)-[r:RELATED_TO]->(d)
+        
+*3
+$11
+GRAPH.QUERY
+$12
+expert_graph
+$227
+CYPHER orcid="https://orcid.org/0000-0002-3245-2218" domain_id="https://openalex.org/C121332964" 
+        MATCH (e:Expert {orcid: $orcid})
+        MATCH (d:Domain {id: $domain_id})
+        MERGE (e)-[r:RELATED_TO]->(d)
+        
+*3
+$11
+GRAPH.QUERY
+$12
+expert_graph
+$226
+CYPHER orcid="https://orcid.org/0000-0002-3245-2218" domain_id="https://openalex.org/C17744445" 
+        MATCH (e:Expert {orcid: $orcid})
+        MATCH (d:Domain {id: $domain_id})
+        MERGE (e)-[r:RELATED_TO]->(d)
+        
+*3
+$11
+GRAPH.QUERY
+$12
+expert_graph
+$227
+CYPHER orcid="https://orcid.org/0000-0002-3245-2218" domain_id="https://openalex.org/C205649164" 
+        MATCH (e:Expert {orcid: $orcid})
+        MATCH (d:Domain {id: $domain_id})
+        MERGE (e)-[r:RELATED_TO]->(d)
+        
+*3
+$11
+GRAPH.QUERY
+$12
+expert_graph
+$226
+CYPHER orcid="https://orcid.org/0000-0002-3245-2218" domain_id="https://openalex.org/C71924100" 
+        MATCH (e:Expert {orcid: $orcid})
+        MATCH (d:Domain {id: $domain_id})
+        MERGE (e)-[r:RELATED_TO]->(d)
+        
+*3
+$11
+GRAPH.QUERY
+$12
+expert_graph
+$227
+CYPHER orcid="https://orcid.org/0000-0002-3245-2218" domain_id="https://openalex.org/C138885662" 
+        MATCH (e:Expert {orcid: $orcid})
+        MATCH (d:Domain {id: $domain_id})
+        MERGE (e)-[r:RELATED_TO]->(d)
+        
+*3
+$11
+GRAPH.QUERY
+$12
+expert_graph
+$539
+CYPHER orcid="https://orcid.org/0000-0002-3245-2218" 
+        MATCH (e1:Expert {orcid: $orcid})-[:RELATED_TO]->(d:Domain)<-[:RELATED_TO]-(e2:Expert)
+        WHERE e1 <> e2
+        WITH e1, e2, COUNT(d) as shared_domains
+        MATCH (e2)-[:RELATED_TO]->(d:Domain)
+        WITH e1, e2, shared_domains, COUNT(d) as total_domains
+        WITH e1, e2, shared_domains, total_domains,
+             (1.0 * shared_domains / total_domains) as similarity_score
+        MERGE (e1)-[s:SIMILAR_TO]->(e2)
+        SET s.score = similarity_score
+        
+*3
+$11
+GRAPH.QUERY
+$12
+expert_graph
+$227
+CYPHER orcid="https://orcid.org/0000-0001-6266-3342" domain_id="https://openalex.org/C185592680" 
+        MATCH (e:Expert {orcid: $orcid})
+        MATCH (d:Domain {id: $domain_id})
+        MERGE (e)-[r:RELATED_TO]->(d)
+        
+*3
+$11
+GRAPH.QUERY
+$12
+expert_graph
+$227
+CYPHER orcid="https://orcid.org/0000-0001-6266-3342" domain_id="https://openalex.org/C162324750" 
+        MATCH (e:Expert {orcid: $orcid})
+        MATCH (d:Domain {id: $domain_id})
+        MERGE (e)-[r:RELATED_TO]->(d)
+        
+*3
+$11
+GRAPH.QUERY
+$12
+expert_graph
+$226
+CYPHER orcid="https://orcid.org/0000-0001-6266-3342" domain_id="https://openalex.org/C86803240" 
+        MATCH (e:Expert {orcid: $orcid})
+        MATCH (d:Domain {id: $domain_id})
+        MERGE (e)-[r:RELATED_TO]->(d)
+        
+*3
+$11
+GRAPH.QUERY
+$12
+expert_graph
+$145
+CYPHER domain_id="https://openalex.org/C144133560" name="Business" 
+        MERGE (d:Domain {id: $domain_id})
+        SET d.name = $name
+        
+*3
+$11
+GRAPH.QUERY
+$12
+expert_graph
+$227
+CYPHER orcid="https://orcid.org/0000-0001-6266-3342" domain_id="https://openalex.org/C144133560" 
+        MATCH (e:Expert {orcid: $orcid})
+        MATCH (d:Domain {id: $domain_id})
+        MERGE (e)-[r:RELATED_TO]->(d)
+        
+*3
+$11
+GRAPH.QUERY
+$12
+expert_graph
+$227
+CYPHER orcid="https://orcid.org/0000-0001-6266-3342" domain_id="https://openalex.org/C144024400" 
+        MATCH (e:Expert {orcid: $orcid})
+        MATCH (d:Domain {id: $domain_id})
+        MERGE (e)-[r:RELATED_TO]->(d)
+        
+*3
+$11
+GRAPH.QUERY
+$12
+expert_graph
+$226
+CYPHER orcid="https://orcid.org/0000-0001-6266-3342" domain_id="https://openalex.org/C15744967" 
+        MATCH (e:Expert {orcid: $orcid})
+        MATCH (d:Domain {id: $domain_id})
+        MERGE (e)-[r:RELATED_TO]->(d)
+        
+*3
+$11
+GRAPH.QUERY
+$12
+expert_graph
+$226
+CYPHER orcid="https://orcid.org/0000-0001-6266-3342" domain_id="https://openalex.org/C41008148" 
+        MATCH (e:Expert {orcid: $orcid})
+        MATCH (d:Domain {id: $domain_id})
+        MERGE (e)-[r:RELATED_TO]->(d)
+        
+*3
+$11
+GRAPH.QUERY
+$12
+expert_graph
+$226
+CYPHER orcid="https://orcid.org/0000-0001-6266-3342" domain_id="https://openalex.org/C71924100" 
+        MATCH (e:Expert {orcid: $orcid})
+        MATCH (d:Domain {id: $domain_id})
+        MERGE (e)-[r:RELATED_TO]->(d)
+        
+*3
+$11
+GRAPH.QUERY
+$12
+expert_graph
+$539
+CYPHER orcid="https://orcid.org/0000-0001-6266-3342" 
+        MATCH (e1:Expert {orcid: $orcid})-[:RELATED_TO]->(d:Domain)<-[:RELATED_TO]-(e2:Expert)
+        WHERE e1 <> e2
+        WITH e1, e2, COUNT(d) as shared_domains
+        MATCH (e2)-[:RELATED_TO]->(d:Domain)
+        WITH e1, e2, shared_domains, COUNT(d) as total_domains
+        WITH e1, e2, shared_domains, total_domains,
+             (1.0 * shared_domains / total_domains) as similarity_score
+        MERGE (e1)-[s:SIMILAR_TO]->(e2)
+        SET s.score = similarity_score
+        
+*3
+$11
+GRAPH.QUERY
+$12
+expert_graph
+$227
+CYPHER orcid="https://orcid.org/0000-0001-9190-4651" domain_id="https://openalex.org/C192562407" 
+        MATCH (e:Expert {orcid: $orcid})
+        MATCH (d:Domain {id: $domain_id})
+        MERGE (e)-[r:RELATED_TO]->(d)
+        
+*3
+$11
+GRAPH.QUERY
+$12
+expert_graph
+$227
+CYPHER orcid="https://orcid.org/0000-0001-9190-4651" domain_id="https://openalex.org/C185592680" 
+        MATCH (e:Expert {orcid: $orcid})
+        MATCH (d:Domain {id: $domain_id})
+        MERGE (e)-[r:RELATED_TO]->(d)
+        
+*3
+$11
+GRAPH.QUERY
+$12
+expert_graph
+$226
+CYPHER orcid="https://orcid.org/0000-0001-9190-4651" domain_id="https://openalex.org/C71924100" 
+        MATCH (e:Expert {orcid: $orcid})
+        MATCH (d:Domain {id: $domain_id})
+        MERGE (e)-[r:RELATED_TO]->(d)
+        
+*3
+$11
+GRAPH.QUERY
+$12
+expert_graph
+$227
+CYPHER orcid="https://orcid.org/0000-0001-9190-4651" domain_id="https://openalex.org/C127413603" 
+        MATCH (e:Expert {orcid: $orcid})
+        MATCH (d:Domain {id: $domain_id})
+        MERGE (e)-[r:RELATED_TO]->(d)
+        
+*3
+$11
+GRAPH.QUERY
+$12
+expert_graph
+$227
+CYPHER orcid="https://orcid.org/0000-0001-9190-4651" domain_id="https://openalex.org/C162324750" 
+        MATCH (e:Expert {orcid: $orcid})
+        MATCH (d:Domain {id: $domain_id})
+        MERGE (e)-[r:RELATED_TO]->(d)
+        
+*3
+$11
+GRAPH.QUERY
+$12
+expert_graph
+$226
+CYPHER orcid="https://orcid.org/0000-0001-9190-4651" domain_id="https://openalex.org/C86803240" 
+        MATCH (e:Expert {orcid: $orcid})
+        MATCH (d:Domain {id: $domain_id})
+        MERGE (e)-[r:RELATED_TO]->(d)
+        
+*3
+$11
+GRAPH.QUERY
+$12
+expert_graph
+$157
+CYPHER domain_id="https://openalex.org/C39432304" name="Environmental science" 
+        MERGE (d:Domain {id: $domain_id})
+        SET d.name = $name
+        
+*3
+$11
+GRAPH.QUERY
+$12
+expert_graph
+$226
+CYPHER orcid="https://orcid.org/0000-0001-9190-4651" domain_id="https://openalex.org/C39432304" 
+        MATCH (e:Expert {orcid: $orcid})
+        MATCH (d:Domain {id: $domain_id})
+        MERGE (e)-[r:RELATED_TO]->(d)
+        
+*3
+$11
+GRAPH.QUERY
+$12
+expert_graph
+$227
+CYPHER orcid="https://orcid.org/0000-0001-9190-4651" domain_id="https://openalex.org/C127313418" 
+        MATCH (e:Expert {orcid: $orcid})
+        MATCH (d:Domain {id: $domain_id})
+        MERGE (e)-[r:RELATED_TO]->(d)
+        
+*3
+$11
+GRAPH.QUERY
+$12
+expert_graph
+$227
+CYPHER orcid="https://orcid.org/0000-0001-9190-4651" domain_id="https://openalex.org/C121332964" 
+        MATCH (e:Expert {orcid: $orcid})
+        MATCH (d:Domain {id: $domain_id})
+        MERGE (e)-[r:RELATED_TO]->(d)
+        
+*3
+$11
+GRAPH.QUERY
+$12
+expert_graph
+$226
+CYPHER orcid="https://orcid.org/0000-0001-9190-4651" domain_id="https://openalex.org/C41008148" 
+        MATCH (e:Expert {orcid: $orcid})
+        MATCH (d:Domain {id: $domain_id})
+        MERGE (e)-[r:RELATED_TO]->(d)
+        
+*3
+$11
+GRAPH.QUERY
+$12
+expert_graph
+$226
+CYPHER orcid="https://orcid.org/0000-0001-9190-4651" domain_id="https://openalex.org/C17744445" 
+        MATCH (e:Expert {orcid: $orcid})
+        MATCH (d:Domain {id: $domain_id})
+        MERGE (e)-[r:RELATED_TO]->(d)
+        
+*3
+$11
+GRAPH.QUERY
+$12
+expert_graph
+$226
+CYPHER orcid="https://orcid.org/0000-0001-9190-4651" domain_id="https://openalex.org/C33923547" 
+        MATCH (e:Expert {orcid: $orcid})
+        MATCH (d:Domain {id: $domain_id})
+        MERGE (e)-[r:RELATED_TO]->(d)
+        
+*3
+$11
+GRAPH.QUERY
+$12
+expert_graph
+$227
+CYPHER orcid="https://orcid.org/0000-0001-9190-4651" domain_id="https://openalex.org/C205649164" 
+        MATCH (e:Expert {orcid: $orcid})
+        MATCH (d:Domain {id: $domain_id})
+        MERGE (e)-[r:RELATED_TO]->(d)
+        
+*3
+$11
+GRAPH.QUERY
+$12
+expert_graph
+$227
+CYPHER orcid="https://orcid.org/0000-0001-9190-4651" domain_id="https://openalex.org/C138885662" 
+        MATCH (e:Expert {orcid: $orcid})
+        MATCH (d:Domain {id: $domain_id})
+        MERGE (e)-[r:RELATED_TO]->(d)
+        
+*3
+$11
+GRAPH.QUERY
+$12
+expert_graph
+$539
+CYPHER orcid="https://orcid.org/0000-0001-9190-4651" 
+        MATCH (e1:Expert {orcid: $orcid})-[:RELATED_TO]->(d:Domain)<-[:RELATED_TO]-(e2:Expert)
+        WHERE e1 <> e2
+        WITH e1, e2, COUNT(d) as shared_domains
+        MATCH (e2)-[:RELATED_TO]->(d:Domain)
+        WITH e1, e2, shared_domains, COUNT(d) as total_domains
+        WITH e1, e2, shared_domains, total_domains,
+             (1.0 * shared_domains / total_domains) as similarity_score
+        MERGE (e1)-[s:SIMILAR_TO]->(e2)
+        SET s.score = similarity_score
+        
+*3
+$11
+GRAPH.QUERY
+$12
+expert_graph
+$227
+CYPHER orcid="https://orcid.org/0000-0002-6405-5292" domain_id="https://openalex.org/C127313418" 
+        MATCH (e:Expert {orcid: $orcid})
+        MATCH (d:Domain {id: $domain_id})
+        MERGE (e)-[r:RELATED_TO]->(d)
+        
+*3
+$11
+GRAPH.QUERY
+$12
+expert_graph
+$226
+CYPHER orcid="https://orcid.org/0000-0002-6405-5292" domain_id="https://openalex.org/C33923547" 
+        MATCH (e:Expert {orcid: $orcid})
+        MATCH (d:Domain {id: $domain_id})
+        MERGE (e)-[r:RELATED_TO]->(d)
+        
+*3
+$11
+GRAPH.QUERY
+$12
+expert_graph
+$226
+CYPHER orcid="https://orcid.org/0000-0002-6405-5292" domain_id="https://openalex.org/C71924100" 
+        MATCH (e:Expert {orcid: $orcid})
+        MATCH (d:Domain {id: $domain_id})
+        MERGE (e)-[r:RELATED_TO]->(d)
+        
+*3
+$11
+GRAPH.QUERY
+$12
+expert_graph
+$227
+CYPHER orcid="https://orcid.org/0000-0002-6405-5292" domain_id="https://openalex.org/C162324750" 
+        MATCH (e:Expert {orcid: $orcid})
+        MATCH (d:Domain {id: $domain_id})
+        MERGE (e)-[r:RELATED_TO]->(d)
+        
+*3
+$11
+GRAPH.QUERY
+$12
+expert_graph
+$226
+CYPHER orcid="https://orcid.org/0000-0002-6405-5292" domain_id="https://openalex.org/C86803240" 
+        MATCH (e:Expert {orcid: $orcid})
+        MATCH (d:Domain {id: $domain_id})
+        MERGE (e)-[r:RELATED_TO]->(d)
+        
+*3
+$11
+GRAPH.QUERY
+$12
+expert_graph
+$227
+CYPHER orcid="https://orcid.org/0000-0002-6405-5292" domain_id="https://openalex.org/C205649164" 
+        MATCH (e:Expert {orcid: $orcid})
+        MATCH (d:Domain {id: $domain_id})
+        MERGE (e)-[r:RELATED_TO]->(d)
+        
+*3
+$11
+GRAPH.QUERY
+$12
+expert_graph
+$227
+CYPHER orcid="https://orcid.org/0000-0002-6405-5292" domain_id="https://openalex.org/C138885662" 
+        MATCH (e:Expert {orcid: $orcid})
+        MATCH (d:Domain {id: $domain_id})
+        MERGE (e)-[r:RELATED_TO]->(d)
+        
+*3
+$11
+GRAPH.QUERY
+$12
+expert_graph
+$227
+CYPHER orcid="https://orcid.org/0000-0002-6405-5292" domain_id="https://openalex.org/C185592680" 
+        MATCH (e:Expert {orcid: $orcid})
+        MATCH (d:Domain {id: $domain_id})
+        MERGE (e)-[r:RELATED_TO]->(d)
+        
+*3
+$11
+GRAPH.QUERY
+$12
+expert_graph
+$227
+CYPHER orcid="https://orcid.org/0000-0002-6405-5292" domain_id="https://openalex.org/C127413603" 
+        MATCH (e:Expert {orcid: $orcid})
+        MATCH (d:Domain {id: $domain_id})
+        MERGE (e)-[r:RELATED_TO]->(d)
+        
+*3
+$11
+GRAPH.QUERY
+$12
+expert_graph
+$143
+CYPHER domain_id="https://openalex.org/C95457728" name="History" 
+        MERGE (d:Domain {id: $domain_id})
+        SET d.name = $name
+        
+*3
+$11
+GRAPH.QUERY
+$12
+expert_graph
+$226
+CYPHER orcid="https://orcid.org/0000-0002-6405-5292" domain_id="https://openalex.org/C95457728" 
+        MATCH (e:Expert {orcid: $orcid})
+        MATCH (d:Domain {id: $domain_id})
+        MERGE (e)-[r:RELATED_TO]->(d)
+        
+*3
+$11
+GRAPH.QUERY
+$12
+expert_graph
+$227
+CYPHER orcid="https://orcid.org/0000-0002-6405-5292" domain_id="https://openalex.org/C144024400" 
+        MATCH (e:Expert {orcid: $orcid})
+        MATCH (d:Domain {id: $domain_id})
+        MERGE (e)-[r:RELATED_TO]->(d)
+        
+*3
+$11
+GRAPH.QUERY
+$12
+expert_graph
+$227
+CYPHER orcid="https://orcid.org/0000-0002-6405-5292" domain_id="https://openalex.org/C121332964" 
+        MATCH (e:Expert {orcid: $orcid})
+        MATCH (d:Domain {id: $domain_id})
+        MERGE (e)-[r:RELATED_TO]->(d)
+        
+*3
+$11
+GRAPH.QUERY
+$12
+expert_graph
+$140
+CYPHER domain_id="https://openalex.org/C142362112" name="Art" 
+        MERGE (d:Domain {id: $domain_id})
+        SET d.name = $name
+        
+*3
+$11
+GRAPH.QUERY
+$12
+expert_graph
+$227
+CYPHER orcid="https://orcid.org/0000-0002-6405-5292" domain_id="https://openalex.org/C142362112" 
+        MATCH (e:Expert {orcid: $orcid})
+        MATCH (d:Domain {id: $domain_id})
+        MERGE (e)-[r:RELATED_TO]->(d)
+        
+*3
+$11
+GRAPH.QUERY
+$12
+expert_graph
+$227
+CYPHER orcid="https://orcid.org/0000-0002-6405-5292" domain_id="https://openalex.org/C192562407" 
+        MATCH (e:Expert {orcid: $orcid})
+        MATCH (d:Domain {id: $domain_id})
+        MERGE (e)-[r:RELATED_TO]->(d)
+        
+*3
+$11
+GRAPH.QUERY
+$12
+expert_graph
+$226
+CYPHER orcid="https://orcid.org/0000-0002-6405-5292" domain_id="https://openalex.org/C39432304" 
+        MATCH (e:Expert {orcid: $orcid})
+        MATCH (d:Domain {id: $domain_id})
+        MERGE (e)-[r:RELATED_TO]->(d)
+        
+*3
+$11
+GRAPH.QUERY
+$12
+expert_graph
+$227
+CYPHER orcid="https://orcid.org/0000-0002-6405-5292" domain_id="https://openalex.org/C144133560" 
+        MATCH (e:Expert {orcid: $orcid})
+        MATCH (d:Domain {id: $domain_id})
+        MERGE (e)-[r:RELATED_TO]->(d)
+        
+*3
+$11
+GRAPH.QUERY
+$12
+expert_graph
+$226
+CYPHER orcid="https://orcid.org/0000-0002-6405-5292" domain_id="https://openalex.org/C15744967" 
+        MATCH (e:Expert {orcid: $orcid})
+        MATCH (d:Domain {id: $domain_id})
+        MERGE (e)-[r:RELATED_TO]->(d)
+        
+*3
+$11
+GRAPH.QUERY
+$12
+expert_graph
+$226
+CYPHER orcid="https://orcid.org/0000-0002-6405-5292" domain_id="https://openalex.org/C41008148" 
+        MATCH (e:Expert {orcid: $orcid})
+        MATCH (d:Domain {id: $domain_id})
+        MERGE (e)-[r:RELATED_TO]->(d)
+        
+*3
+$11
+GRAPH.QUERY
+$12
+expert_graph
+$226
+CYPHER orcid="https://orcid.org/0000-0002-6405-5292" domain_id="https://openalex.org/C17744445" 
+        MATCH (e:Expert {orcid: $orcid})
+        MATCH (d:Domain {id: $domain_id})
+        MERGE (e)-[r:RELATED_TO]->(d)
+        
+*3
+$11
+GRAPH.QUERY
+$12
+expert_graph
+$539
+CYPHER orcid="https://orcid.org/0000-0002-6405-5292" 
+        MATCH (e1:Expert {orcid: $orcid})-[:RELATED_TO]->(d:Domain)<-[:RELATED_TO]-(e2:Expert)
+        WHERE e1 <> e2
+        WITH e1, e2, COUNT(d) as shared_domains
+        MATCH (e2)-[:RELATED_TO]->(d:Domain)
+        WITH e1, e2, shared_domains, COUNT(d) as total_domains
+        WITH e1, e2, shared_domains, total_domains,
+             (1.0 * shared_domains / total_domains) as similarity_score
+        MERGE (e1)-[s:SIMILAR_TO]->(e2)
+        SET s.score = similarity_score
+        
+*3
+$11
+GRAPH.QUERY
+$12
+expert_graph
+$227
+CYPHER orcid="https://orcid.org/0000-0002-1927-7072" domain_id="https://openalex.org/C185592680" 
+        MATCH (e:Expert {orcid: $orcid})
+        MATCH (d:Domain {id: $domain_id})
+        MERGE (e)-[r:RELATED_TO]->(d)
+        
+*3
+$11
+GRAPH.QUERY
+$12
+expert_graph
+$226
+CYPHER orcid="https://orcid.org/0000-0002-1927-7072" domain_id="https://openalex.org/C86803240" 
+        MATCH (e:Expert {orcid: $orcid})
+        MATCH (d:Domain {id: $domain_id})
+        MERGE (e)-[r:RELATED_TO]->(d)
+        
+*3
+$11
+GRAPH.QUERY
+$12
+expert_graph
+$227
+CYPHER orcid="https://orcid.org/0000-0002-1927-7072" domain_id="https://openalex.org/C144024400" 
+        MATCH (e:Expert {orcid: $orcid})
+        MATCH (d:Domain {id: $domain_id})
+        MERGE (e)-[r:RELATED_TO]->(d)
+        
+*3
+$11
+GRAPH.QUERY
+$12
+expert_graph
+$227
+CYPHER orcid="https://orcid.org/0000-0002-1927-7072" domain_id="https://openalex.org/C121332964" 
+        MATCH (e:Expert {orcid: $orcid})
+        MATCH (d:Domain {id: $domain_id})
+        MERGE (e)-[r:RELATED_TO]->(d)
+        
+*3
+$11
+GRAPH.QUERY
+$12
+expert_graph
+$226
+CYPHER orcid="https://orcid.org/0000-0002-1927-7072" domain_id="https://openalex.org/C71924100" 
+        MATCH (e:Expert {orcid: $orcid})
+        MATCH (d:Domain {id: $domain_id})
+        MERGE (e)-[r:RELATED_TO]->(d)
+        
+*3
+$11
+GRAPH.QUERY
+$12
+expert_graph
+$227
+CYPHER orcid="https://orcid.org/0000-0002-1927-7072" domain_id="https://openalex.org/C138885662" 
+        MATCH (e:Expert {orcid: $orcid})
+        MATCH (d:Domain {id: $domain_id})
+        MERGE (e)-[r:RELATED_TO]->(d)
+        
+*3
+$11
+GRAPH.QUERY
+$12
+expert_graph
+$539
+CYPHER orcid="https://orcid.org/0000-0002-1927-7072" 
+        MATCH (e1:Expert {orcid: $orcid})-[:RELATED_TO]->(d:Domain)<-[:RELATED_TO]-(e2:Expert)
+        WHERE e1 <> e2
+        WITH e1, e2, COUNT(d) as shared_domains
+        MATCH (e2)-[:RELATED_TO]->(d:Domain)
+        WITH e1, e2, shared_domains, COUNT(d) as total_domains
+        WITH e1, e2, shared_domains, total_domains,
+             (1.0 * shared_domains / total_domains) as similarity_score
+        MERGE (e1)-[s:SIMILAR_TO]->(e2)
+        SET s.score = similarity_score
+        
+*2
+$6
+SELECT
+$1
+0
+*3
+$11
+GRAPH.QUERY
+$12
+expert_graph
+$131
+CYPHER orcid="0000-0001-9435-1431" name="Mridul Khan" 
+        MERGE (e:Expert {orcid: $orcid})
+        SET e.name = $name
+        
+*3
+$11
+GRAPH.QUERY
+$12
+expert_graph
+$209
+CYPHER orcid="0000-0001-9435-1431" domain_id="https://openalex.org/C192562407" 
+        MATCH (e:Expert {orcid: $orcid})
+        MATCH (d:Domain {id: $domain_id})
+        MERGE (e)-[r:RELATED_TO]->(d)
+        
+*3
+$11
+GRAPH.QUERY
+$12
+expert_graph
+$208
+CYPHER orcid="0000-0001-9435-1431" domain_id="https://openalex.org/C71924100" 
+        MATCH (e:Expert {orcid: $orcid})
+        MATCH (d:Domain {id: $domain_id})
+        MERGE (e)-[r:RELATED_TO]->(d)
+        
+*3
+$11
+GRAPH.QUERY
+$12
+expert_graph
+$209
+CYPHER orcid="0000-0001-9435-1431" domain_id="https://openalex.org/C121332964" 
+        MATCH (e:Expert {orcid: $orcid})
+        MATCH (d:Domain {id: $domain_id})
+        MERGE (e)-[r:RELATED_TO]->(d)
+        
+*3
+$11
+GRAPH.QUERY
+$12
+expert_graph
+$209
+CYPHER orcid="0000-0001-9435-1431" domain_id="https://openalex.org/C127413603" 
+        MATCH (e:Expert {orcid: $orcid})
+        MATCH (d:Domain {id: $domain_id})
+        MERGE (e)-[r:RELATED_TO]->(d)
+        
+*3
+$11
+GRAPH.QUERY
+$12
+expert_graph
+$209
+CYPHER orcid="0000-0001-9435-1431" domain_id="https://openalex.org/C127313418" 
+        MATCH (e:Expert {orcid: $orcid})
+        MATCH (d:Domain {id: $domain_id})
+        MERGE (e)-[r:RELATED_TO]->(d)
+        
+*3
+$11
+GRAPH.QUERY
+$12
+expert_graph
+$208
+CYPHER orcid="0000-0001-9435-1431" domain_id="https://openalex.org/C86803240" 
+        MATCH (e:Expert {orcid: $orcid})
+        MATCH (d:Domain {id: $domain_id})
+        MERGE (e)-[r:RELATED_TO]->(d)
+        
+*3
+$11
+GRAPH.QUERY
+$12
+expert_graph
+$209
+CYPHER orcid="0000-0001-9435-1431" domain_id="https://openalex.org/C138885662" 
+        MATCH (e:Expert {orcid: $orcid})
+        MATCH (d:Domain {id: $domain_id})
+        MERGE (e)-[r:RELATED_TO]->(d)
+        
+*3
+$11
+GRAPH.QUERY
+$12
+expert_graph
+$208
+CYPHER orcid="0000-0001-9435-1431" domain_id="https://openalex.org/C41008148" 
+        MATCH (e:Expert {orcid: $orcid})
+        MATCH (d:Domain {id: $domain_id})
+        MERGE (e)-[r:RELATED_TO]->(d)
+        
+*3
+$11
+GRAPH.QUERY
+$12
+expert_graph
+$209
+CYPHER orcid="0000-0001-9435-1431" domain_id="https://openalex.org/C162324750" 
+        MATCH (e:Expert {orcid: $orcid})
+        MATCH (d:Domain {id: $domain_id})
+        MERGE (e)-[r:RELATED_TO]->(d)
+        
+*3
+$11
+GRAPH.QUERY
+$12
+expert_graph
+$208
+CYPHER orcid="0000-0001-9435-1431" domain_id="https://openalex.org/C33923547" 
+        MATCH (e:Expert {orcid: $orcid})
+        MATCH (d:Domain {id: $domain_id})
+        MERGE (e)-[r:RELATED_TO]->(d)
+        
+*3
+$11
+GRAPH.QUERY
+$12
+expert_graph
+$209
+CYPHER orcid="0000-0001-9435-1431" domain_id="https://openalex.org/C205649164" 
+        MATCH (e:Expert {orcid: $orcid})
+        MATCH (d:Domain {id: $domain_id})
+        MERGE (e)-[r:RELATED_TO]->(d)
+        
+*3
+$11
+GRAPH.QUERY
+$12
+expert_graph
+$521
+CYPHER orcid="0000-0001-9435-1431" 
+        MATCH (e1:Expert {orcid: $orcid})-[:RELATED_TO]->(d:Domain)<-[:RELATED_TO]-(e2:Expert)
+        WHERE e1 <> e2
+        WITH e1, e2, COUNT(d) as shared_domains
+        MATCH (e2)-[:RELATED_TO]->(d:Domain)
+        WITH e1, e2, shared_domains, COUNT(d) as total_domains
+        WITH e1, e2, shared_domains, total_domains,
+             (1.0 * shared_domains / total_domains) as similarity_score
+        MERGE (e1)-[s:SIMILAR_TO]->(e2)
+        SET s.score = similarity_score
+        
+*2
+$6
+SELECT
+$1
+0
+*3
+$11
+GRAPH.QUERY
+$12
+expert_graph
+$539
+CYPHER orcid="https://orcid.org/0000-0001-9435-1431" 
+        MATCH (e1:Expert {orcid: $orcid})-[:RELATED_TO]->(d:Domain)<-[:RELATED_TO]-(e2:Expert)
+        WHERE e1 <> e2
+        WITH e1, e2, COUNT(d) as shared_domains
+        MATCH (e2)-[:RELATED_TO]->(d:Domain)
+        WITH e1, e2, shared_domains, COUNT(d) as total_domains
+        WITH e1, e2, shared_domains, total_domains,
+             (1.0 * shared_domains / total_domains) as similarity_score
+        MERGE (e1)-[s:SIMILAR_TO]->(e2)
+        SET s.score = similarity_score
+        
+*2
+$6
+SELECT
+$1
+0
+*3
+$11
+GRAPH.QUERY
+$12
+expert_graph
+$150
+CYPHER orcid="https://orcid.org/0009-0007-3785-8552" name="Qingqiu Chen" 
+        MERGE (e:Expert {orcid: $orcid})
+        SET e.name = $name
+        
+*3
+$11
+GRAPH.QUERY
+$12
+expert_graph
+$227
+CYPHER orcid="https://orcid.org/0009-0007-3785-8552" domain_id="https://openalex.org/C162324750" 
+        MATCH (e:Expert {orcid: $orcid})
+        MATCH (d:Domain {id: $domain_id})
+        MERGE (e)-[r:RELATED_TO]->(d)
+        
+*3
+$11
+GRAPH.QUERY
+$12
+expert_graph
+$227
+CYPHER orcid="https://orcid.org/0009-0007-3785-8552" domain_id="https://openalex.org/C185592680" 
+        MATCH (e:Expert {orcid: $orcid})
+        MATCH (d:Domain {id: $domain_id})
+        MERGE (e)-[r:RELATED_TO]->(d)
+        
+*3
+$11
+GRAPH.QUERY
+$12
+expert_graph
+$227
+CYPHER orcid="https://orcid.org/0009-0007-3785-8552" domain_id="https://openalex.org/C144024400" 
+        MATCH (e:Expert {orcid: $orcid})
+        MATCH (d:Domain {id: $domain_id})
+        MERGE (e)-[r:RELATED_TO]->(d)
+        
+*3
+$11
+GRAPH.QUERY
+$12
+expert_graph
+$227
+CYPHER orcid="https://orcid.org/0009-0007-3785-8552" domain_id="https://openalex.org/C121332964" 
+        MATCH (e:Expert {orcid: $orcid})
+        MATCH (d:Domain {id: $domain_id})
+        MERGE (e)-[r:RELATED_TO]->(d)
+        
+*3
+$11
+GRAPH.QUERY
+$12
+expert_graph
+$226
+CYPHER orcid="https://orcid.org/0009-0007-3785-8552" domain_id="https://openalex.org/C33923547" 
+        MATCH (e:Expert {orcid: $orcid})
+        MATCH (d:Domain {id: $domain_id})
+        MERGE (e)-[r:RELATED_TO]->(d)
+        
+*3
+$11
+GRAPH.QUERY
+$12
+expert_graph
+$227
+CYPHER orcid="https://orcid.org/0009-0007-3785-8552" domain_id="https://openalex.org/C138885662" 
+        MATCH (e:Expert {orcid: $orcid})
+        MATCH (d:Domain {id: $domain_id})
+        MERGE (e)-[r:RELATED_TO]->(d)
+        
+*3
+$11
+GRAPH.QUERY
+$12
+expert_graph
+$226
+CYPHER orcid="https://orcid.org/0009-0007-3785-8552" domain_id="https://openalex.org/C71924100" 
+        MATCH (e:Expert {orcid: $orcid})
+        MATCH (d:Domain {id: $domain_id})
+        MERGE (e)-[r:RELATED_TO]->(d)
+        
+*3
+$11
+GRAPH.QUERY
+$12
+expert_graph
+$226
+CYPHER orcid="https://orcid.org/0009-0007-3785-8552" domain_id="https://openalex.org/C17744445" 
+        MATCH (e:Expert {orcid: $orcid})
+        MATCH (d:Domain {id: $domain_id})
+        MERGE (e)-[r:RELATED_TO]->(d)
+        
+*3
+$11
+GRAPH.QUERY
+$12
+expert_graph
+$227
+CYPHER orcid="https://orcid.org/0009-0007-3785-8552" domain_id="https://openalex.org/C127313418" 
+        MATCH (e:Expert {orcid: $orcid})
+        MATCH (d:Domain {id: $domain_id})
+        MERGE (e)-[r:RELATED_TO]->(d)
+        
+*3
+$11
+GRAPH.QUERY
+$12
+expert_graph
+$227
+CYPHER orcid="https://orcid.org/0009-0007-3785-8552" domain_id="https://openalex.org/C205649164" 
+        MATCH (e:Expert {orcid: $orcid})
+        MATCH (d:Domain {id: $domain_id})
+        MERGE (e)-[r:RELATED_TO]->(d)
+        
+*3
+$11
+GRAPH.QUERY
+$12
+expert_graph
+$226
+CYPHER orcid="https://orcid.org/0009-0007-3785-8552" domain_id="https://openalex.org/C39432304" 
+        MATCH (e:Expert {orcid: $orcid})
+        MATCH (d:Domain {id: $domain_id})
+        MERGE (e)-[r:RELATED_TO]->(d)
+        
+*3
+$11
+GRAPH.QUERY
+$12
+expert_graph
+$227
+CYPHER orcid="https://orcid.org/0009-0007-3785-8552" domain_id="https://openalex.org/C144133560" 
+        MATCH (e:Expert {orcid: $orcid})
+        MATCH (d:Domain {id: $domain_id})
+        MERGE (e)-[r:RELATED_TO]->(d)
+        
+*3
+$11
+GRAPH.QUERY
+$12
+expert_graph
+$226
+CYPHER orcid="https://orcid.org/0009-0007-3785-8552" domain_id="https://openalex.org/C15744967" 
+        MATCH (e:Expert {orcid: $orcid})
+        MATCH (d:Domain {id: $domain_id})
+        MERGE (e)-[r:RELATED_TO]->(d)
+        
+*3
+$11
+GRAPH.QUERY
+$12
+expert_graph
+$226
+CYPHER orcid="https://orcid.org/0009-0007-3785-8552" domain_id="https://openalex.org/C86803240" 
+        MATCH (e:Expert {orcid: $orcid})
+        MATCH (d:Domain {id: $domain_id})
+        MERGE (e)-[r:RELATED_TO]->(d)
+        
+*3
+$11
+GRAPH.QUERY
+$12
+expert_graph
+$227
+CYPHER orcid="https://orcid.org/0009-0007-3785-8552" domain_id="https://openalex.org/C127413603" 
+        MATCH (e:Expert {orcid: $orcid})
+        MATCH (d:Domain {id: $domain_id})
+        MERGE (e)-[r:RELATED_TO]->(d)
+        
+*3
+$11
+GRAPH.QUERY
+$12
+expert_graph
+$226
+CYPHER orcid="https://orcid.org/0009-0007-3785-8552" domain_id="https://openalex.org/C41008148" 
+        MATCH (e:Expert {orcid: $orcid})
+        MATCH (d:Domain {id: $domain_id})
+        MERGE (e)-[r:RELATED_TO]->(d)
+        
+*3
+$11
+GRAPH.QUERY
+$12
+expert_graph
+$539
+CYPHER orcid="https://orcid.org/0009-0007-3785-8552" 
+        MATCH (e1:Expert {orcid: $orcid})-[:RELATED_TO]->(d:Domain)<-[:RELATED_TO]-(e2:Expert)
+        WHERE e1 <> e2
+        WITH e1, e2, COUNT(d) as shared_domains
+        MATCH (e2)-[:RELATED_TO]->(d:Domain)
+        WITH e1, e2, shared_domains, COUNT(d) as total_domains
+        WITH e1, e2, shared_domains, total_domains,
+             (1.0 * shared_domains / total_domains) as similarity_score
+        MERGE (e1)-[s:SIMILAR_TO]->(e2)
+        SET s.score = similarity_score
+        

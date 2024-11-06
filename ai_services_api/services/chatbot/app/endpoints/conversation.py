@@ -11,12 +11,12 @@ message_handler = MessageHandler(llm_manager)
 # Variable to store the last response
 last_response = None
 
-@router.post("/")
+@router.post("/")  # This defines the POST endpoint
 async def chat_with_model(chat_request: ChatRequest):
-    global last_response  # Use a global variable to store the last response
+    global last_response
     try:
         # Get the user's query from the request
-        message = chat_request.query  # Only using the query from the ChatRequest schema
+        message = chat_request.query
 
         # Initialize a list to collect response parts
         response_parts = []
@@ -25,23 +25,21 @@ async def chat_with_model(chat_request: ChatRequest):
         async for part in message_handler.send_message_async(message):
             # Decode each part if it's in bytes
             if isinstance(part, bytes):
-                part = part.decode('utf-8')  # Change 'utf-8' to the correct encoding if needed
+                part = part.decode('utf-8')
             response_parts.append(part)
 
-        last_response = ''.join(response_parts)  # Join all parts into a single response
-        return {"response": last_response}  # Return the response directly
+        last_response = ''.join(response_parts)
+        return {"response": last_response}
 
     except Exception as e:
-        # Handle errors and return a 500 response with the error message
         raise HTTPException(status_code=500, detail=str(e))
 
-@router.get("/")
+@router.get("/")  # This defines the GET endpoint
 async def get_last_chat_response():
-    global last_response  # Access the last response
+    global last_response
     try:
         if last_response is None:
             raise HTTPException(status_code=404, detail="No response available")
-
         return {"response": last_response}
 
     except Exception as e:

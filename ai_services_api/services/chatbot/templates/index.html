@@ -98,7 +98,7 @@
             `;
 
             try {
-                const response = await fetch("http://localhost:8000/conversation/", {
+                const response = await fetch("http://localhost:8000/chatbot/conversation", {
                     method: "POST",
                     headers: { "Content-Type": "application/json" },
                     body: JSON.stringify({ "query": userInput }),

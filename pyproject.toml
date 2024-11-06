@@ -8,7 +8,7 @@ authors = ["kimu90 <briankimutai@icloud.com>"]
 python = "^3.11"
 fastapi = "0.115.3"
 langchain = "0.3.4"
-redis = "^5.1.1"
+redis = "3.5.3"
 python-dotenv = "^1.0.1"
 langchain-google-genai = "2.0.1"
 pydantic = "^2.9.2"
@@ -16,6 +16,10 @@ numpy = "1.26.4"
 uvicorn = "^0.32.0"
 pandas = "^2.2.0"  # Updated to latest version compatible with Python 3.11
 pyarrow = "^15.0.0"  # Added as it's commonly needed with pandas
+redisgraph = "^2.4.4"
+pydantic-settings = "^2.6.1"
+aiohttp = "^3.10.10"
+asyncio = "^3.4.3"
 
 [build-system]
 requires = ["poetry-core"]
