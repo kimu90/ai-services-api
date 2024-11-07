@@ -12,7 +12,7 @@ class DataLoader:
     async def load_initial_experts(self, orcid_file_path: str):
         """Load initial experts from a CSV file containing ORCIDs"""
         print("Starting initial data load...")
-        
+
         # Read ORCIDs from CSV
         with open(orcid_file_path, 'r') as file:
             reader = csv.reader(file)
@@ -31,11 +31,14 @@ class DataLoader:
 
     def verify_graph(self):
         """Verify that the graph has been populated"""
-        stats = self.graph.get_graph_stats()
+        stats = self.graph.get_graph_stats()  # Get all graph statistics at once
+
+        # Output graph statistics
         print(f"Graph Statistics:")
         print(f"Number of Expert nodes: {stats['expert_count']}")
-        print(f"Number of Topic nodes: {stats['topic_count']}")
+        print(f"Number of Domain nodes: {stats['domain_count']}")
+        print(f"Number of Field nodes: {stats['field_count']}")
+        print(f"Number of Subfield nodes: {stats['subfield_count']}")
         print(f"Number of relationships: {stats['relationship_count']}")
 
-
-
+        return stats

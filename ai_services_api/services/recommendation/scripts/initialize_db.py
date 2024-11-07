@@ -10,7 +10,7 @@ from ai_services_api.services.recommendation.scripts.data_loader import DataLoad
 async def main():
     loader = DataLoader()
     script_dir = os.path.dirname(os.path.abspath(__file__))
-    data_path = os.path.join(script_dir, "data", "graph.csv")
+    data_path = os.path.join(script_dir, "data", "try_test.csv")
     await loader.load_initial_experts(data_path)
     loader.verify_graph()
 

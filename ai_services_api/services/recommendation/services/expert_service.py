@@ -10,8 +10,8 @@ class ExpertService:
         self.openalex = OpenAlexService()
 
     async def add_expert(self, orcid: str):
-        """Add or update an expert in the graph database with domain relationships"""
-        
+        """Add or update an expert in the graph database with domain, field, and subfield relationships"""
+
         # Prepend the base URL to the ORCID
         orcid_url = f"https://orcid.org/{orcid}"
 
@@ -28,7 +28,7 @@ class ExpertService:
             name=expert_data.get('display_name', 'No name provided')
         )
 
-        # Get domains related to the expert
+        # Get domains, fields, and subfields related to the expert
         domains = await self.openalex.get_expert_domains(orcid_url)
 
         for domain in domains:
@@ -41,23 +41,54 @@ class ExpertService:
             # Create relationship between the expert and the domain
             self.graph.create_related_to_relationship(orcid_url, domain['id'])
 
-        # Calculate similarities based on shared domains
+            # Assuming fields and subfields are part of the domain data
+            # Fetch fields related to this domain (this could be a separate API call or data part)
+            fields = domain.get('fields', [])
+            for field in fields:
+                # Create field node if it doesn't exist
+                self.graph.create_field_node(
+                    field_id=field['id'],
+                    name=field['display_name']
+                )
+
+                # Create relationship between the expert and the field
+                self.graph.create_related_to_field_relationship(orcid_url, field['id'])
+
+                # Fetch subfields for the field
+                subfields = field.get('subfields', [])
+                for subfield in subfields:
+                    # Create subfield node if it doesn't exist
+                    self.graph.create_subfield_node(
+                        subfield_id=subfield['id'],
+                        name=subfield['display_name']
+                    )
+
+                    # Create relationship between the expert and the subfield
+                    self.graph.create_related_to_subfield_relationship(orcid_url, subfield['id'])
+
+        # Calculate similarities based on shared domains, fields, and subfields
         self.graph.calculate_similar_experts(orcid_url)
 
         return expert_data
 
+
     def get_similar_experts(self, orcid: str, limit: int = 10):
-        """Retrieve similar experts based on shared domains"""
+        """Retrieve similar experts based on shared domains, fields, and subfields"""
         
         # Prepend the base URL to the ORCID for similarity check
         orcid_url = f"https://orcid.org/{orcid}"
         
         # Define the query to get similar experts from the graph
         query = """
-        MATCH (e1:Expert)-[s:SIMILAR_TO]->(e2:Expert)
+        MATCH (e1:Expert)-[:RELATED_TO]->(d:Domain)<-[:RELATED_TO]-(e2:Expert)
+        OPTIONAL MATCH (d)<-[:RELATED_TO]-(f:Field)<-[:RELATED_TO]-(e2)
+        OPTIONAL MATCH (f)<-[:RELATED_TO]-(s:Subfield)<-[:RELATED_TO]-(e2)
         WHERE e1.orcid = $orcid
-        RETURN e2.orcid AS similar_orcid, e2.name AS name, s.score AS similarity_score
-        ORDER BY s.score DESC
+        RETURN e2.orcid AS similar_orcid, e2.name AS name, 
+            COUNT(DISTINCT d) AS shared_domains, 
+            COUNT(DISTINCT f) AS shared_fields, 
+            COUNT(DISTINCT s) AS shared_subfields
+        ORDER BY shared_domains DESC, shared_fields DESC, shared_subfields DESC
         LIMIT $limit
         """
         
@@ -82,9 +113,9 @@ class ExpertService:
             # Create SimilarExpert object directly from the record fields
             similar_experts.append(
                 SimilarExpert(
-                    orcid=record[0],        # similar_orcid is the first field
-                    name=record[1],         # name is the second field
-                    similarity_score=float(record[2])  # similarity_score is the third field
+                    orcid=record[0],  # similar_orcid is the first field
+                    name=record[1],   # name is the second field
+                    similarity_score=record[2] + record[3] + record[4]  # Summing shared domains, fields, subfields
                 )
             )
         

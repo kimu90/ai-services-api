@@ -1,13 +1,7 @@
-#tests
-GRAPH.QUERY expert_graph "MATCH (e1:Expert)-[s:SIMILAR_TO]->(e2:Expert) WHERE e1.orcid IN ['https://orcid.org/0000-0003-2462-9471', 'https://orcid.org/0000-0001-6266-3342'] RETURN e1.orcid AS orcid, e2.orcid AS similar_orcid, e2.name AS name, s.score AS similarity_score ORDER BY s.score DESC LIMIT 10"
+GRAPH.QUERY reco_graph "MATCH (e1:Expert)-[:RELATED_TO]->(f:Field)<-[:RELATED_TO]-(e2:Expert), (e1)-[:RELATED_TO]->(sf:Subfield)<-[:RELATED_TO]-(e2) WHERE e1 <> e2 RETURN e1.orcid AS expert_1_orcid, e2.orcid AS expert_2_orcid, f.name AS shared_field, sf.name AS shared_subfield"
 
-GRAPH.QUERY expert_graph "MATCH (e1:Expert)-[s:SIMILAR_TO]->(e2:Expert) WHERE e1.orcid = 'https://orcid.org/0000-0001-6266-3342' RETURN e1.orcid AS orcid, e2.orcid AS similar_orcid, e2.name AS name, s.score AS similarity_score ORDER BY s.score DESC LIMIT 10"
-https://orcid.org/0000-0001-6266-3342
-
- """
-        MATCH (e1:Expert)-[s:SIMILAR_TO]->(e2:Expert)
-        WHERE e1.orcid = $orcid
-        RETURN e1.orcid AS orcid, e2.orcid AS similar_orcid, e2.name AS name, s.score AS similarity_score
-        ORDER BY s.score DESC
-        LIMIT $limit
-        """
+GRAPH.QUERY reco_graph "MATCH (e1:Expert {orcid: 'https://orcid.org/0000-0002-3417-7926'})-[s:RELATED_TO]->(f:Field), 
+                                (e1)-[:RELATED_TO]->(sf:Subfield), 
+                                (e2:Expert {orcid: 'https://orcid.org/0000-0002-3041-6336'})-[s2:RELATED_TO]->(f), 
+                                (e2)-[:RELATED_TO]->(sf) 
+                         RETURN e1.orcid AS orcid_1, e2.orcid AS orcid_2, f.name AS field, sf.name AS subfield"
