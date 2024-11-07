@@ -1,13 +1,3 @@
-import requests
-import time
-from ai_services_api.services.recommendation.core.database import GraphDatabase  # Changed from RedisGraph
-from ai_services_api.services.recommendation.services.openalex_service import OpenAlexService
-
-BASE_WORKS_URL = 'https://api.openalex.org/works'
-BATCH_SIZE = 10
-INITIAL_DELAY = 5.0  # Delay in seconds between batches
-MAX_BACKOFF_DELAY = 100.0  # Maximum backoff delay in seconds
-
 class ExpertService:
     def __init__(self):
         self.graph = GraphDatabase()
@@ -108,33 +98,20 @@ class ExpertService:
         return expert_data
 
     def get_similar_experts(self, orcid: str, limit: int = 10):
-        """Get similar experts based on shared domains, fields, and subfields."""
+        """Get similar experts based on shared fields and subfields."""
         query = """
-        MATCH (e1:Expert {orcid: $orcid})
-        OPTIONAL MATCH (e1)-[:RELATED_TO]->(d:Domain)<-[:RELATED_TO]-(e2:Expert)
-        OPTIONAL MATCH (e1)-[:RELATED_TO]->(f:Field)<-[:RELATED_TO]-(e2)
-        OPTIONAL MATCH (e1)-[:RELATED_TO]->(s:Subfield)<-[:RELATED_TO]-(e2)
-        WHERE e1 <> e2
-        WITH e1, e2,
-            COUNT(DISTINCT d) AS shared_domains,
-            COUNT(DISTINCT f) AS shared_fields,
-            COUNT(DISTINCT s) AS shared_subfields
-        WITH e1, e2, shared_domains, shared_fields, shared_subfields,
-            (shared_domains + shared_fields + shared_subfields) AS total_shared
-        WITH e1, e2, shared_domains, shared_fields, shared_subfields, total_shared,
-            CASE WHEN total_shared = 0 THEN 1 ELSE total_shared END AS safe_total_shared,
-            (1.0 * total_shared / safe_total_shared) AS similarity_score
-        RETURN e2.orcid AS similar_orcid, e2.name AS name,
-            shared_domains, shared_fields, shared_subfields, total_shared, similarity_score
-        ORDER BY similarity_score DESC
-        LIMIT $limit
+        MATCH (e1:Expert {orcid: $orcid})-[s:RELATED_TO]->(f:Field), 
+              (e1)-[:RELATED_TO]->(sf:Subfield), 
+              (e2:Expert)-[s2:RELATED_TO]->(f), 
+              (e2)-[:RELATED_TO]->(sf) 
+        WHERE e1 <> e2 
+        RETURN e2.orcid AS similar_orcid, e2.name AS name, 
+               f.name AS shared_field, sf.name AS shared_subfield
         """
         
-        params = {
-            'orcid': orcid,
-            'limit': limit
-        }
+        params = {'orcid': orcid}
         
+        # Execute the query to find similar experts
         result = self.graph.query(query, params)
         
         # Log the raw result to see its structure (for debugging purposes)
@@ -148,11 +125,8 @@ class ExpertService:
                 {
                     'orcid': record[0],
                     'name': record[1],
-                    'similarity_score': record[4],
-                    'shared_domains': record[2],
-                    'shared_fields': record[3],
-                    'shared_subfields': record[4],
-                    'total_shared': record[5]
+                    'shared_field': record[2],
+                    'shared_subfield': record[3]
                 }
             )
         
