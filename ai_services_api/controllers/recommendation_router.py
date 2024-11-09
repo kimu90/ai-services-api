@@ -8,6 +8,6 @@ api_router = APIRouter()
 # Include the conversation router
 api_router.include_router(
     recommendation.router,
-    prefix="/recommend",  # Prefix for conversation endpoints
+    prefix="/recommendation",  # Prefix for conversation endpoints
     tags=["recommend"]  # Tag for documentation
 )

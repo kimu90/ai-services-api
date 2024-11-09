@@ -1,3 +1,4 @@
+
 x-aphrc-common: &aphrc-common
   build:
     context: .
@@ -7,7 +8,7 @@ x-aphrc-common: &aphrc-common
   working_dir: /code
   environment: &aphrc-common-env
     REDIS_URL: "redis://redis:6379"
-    REDIS_GRAPH_URL: "redis://redis-graph:6379"  
+    REDIS_GRAPH_URL: "redis://redis-graph:6379"
     DEBUG: "True"
     GEMINI_API_KEY: "${GEMINI_API_KEY}"
     POSTGRES_HOST: "postgres"
@@ -20,7 +21,7 @@ services:
     <<: *aphrc-common
     ports:
       - "8000:8000"
-    command: poetry run uvicorn ai_services_api.app:app --host 0.0.0.0 --port 8000
+    command: poetry run uvicorn ai_services_api.app:app --host 0.0.0.0 --port 8000 --reload
     container_name: api-standalone
     depends_on:
       redis:
@@ -31,42 +32,50 @@ services:
         condition: service_healthy
     networks:
       - aphrc-network
+    # Add healthcheck for API service
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
 
   redis:
     image: redis:latest
     container_name: redis-standalone
-    hostname: aphrc-redis
+    hostname: redis
     restart: always
     ports:
       - "6379:6379"
     volumes:
-      - ./redis-data:/data
-      - ./redis.conf:/usr/local/etc/redis/redis.conf
-    command: ["redis-server", "/usr/local/etc/redis/redis.conf"]
+      - redis-data:/data
+    command: redis-server --appendonly yes
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
-      interval: 120s
-      timeout: 40s
-      retries: 6
+      interval: 30s
+      timeout: 10s
+      retries: 3
     networks:
       - aphrc-network
 
   redis-graph:
     image: redislabs/redisgraph:latest
     container_name: redis-graph
-    hostname: aphrc-redis-graph
+    hostname: redis-graph
     restart: always
     ports:
-      - "6380:6379"  # Expose RedisGraph on port 6380
+      - "6380:6379"  
     volumes:
-      - ./redis-graph-data:/data
-      - ./redis-graph.conf:/usr/local/etc/redis/redis.conf
-    command: ["redis-server", "/usr/local/etc/redis/redis.conf"]
+      - redis-graph-data:/data
+    command: >
+      redis-server 
+      --loadmodule /usr/lib/redis/modules/redisgraph.so 
+      --appendonly yes
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
-      interval: 120s
-      timeout: 40s
-      retries: 6
+      test: ["CMD", "redis-cli", "-h", "localhost", "ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
     networks:
       - aphrc-network
 

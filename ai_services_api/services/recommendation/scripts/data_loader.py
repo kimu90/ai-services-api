@@ -1,7 +1,7 @@
 import asyncio
 from typing import List
 import csv
-from ai_services_api.services.recommendation.services.initial_expert_service import ExpertService
+from ai_services_api.services.recommendation.services.expert_service import ExpertService
 from ai_services_api.services.recommendation.core.database import GraphDatabase  # Changed from RedisGraph
 
 class DataLoader:

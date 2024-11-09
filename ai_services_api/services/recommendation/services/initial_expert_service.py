@@ -1,6 +1,22 @@
+import logging
+import requests
+import time
+from ai_services_api.services.recommendation.core.database import GraphDatabase
+from ai_services_api.services.recommendation.services.openalex_service import OpenAlexService
+
+# Set up logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+# Constants for delay and batch size
+INITIAL_DELAY = 1
+MAX_BACKOFF_DELAY = 60
+BATCH_SIZE = 5
+BASE_WORKS_URL = "https://api.openalex.org/works"
+
 class ExpertService:
     def __init__(self):
-        self.graph = GraphDatabase()
+        self.graph = GraphDatabase()  # Now using RedisGraph
         self.openalex = OpenAlexService()
 
     async def add_expert(self, orcid: str):
@@ -8,8 +24,9 @@ class ExpertService:
         # Step 1: Fetch OpenAlex ID using ORCID
         expert_data = await self.openalex.get_expert_data(orcid)
         if not expert_data:
+            logger.error(f"Failed to fetch expert data for ORCID: {orcid}")
             return None
-        
+
         openalex_id = expert_data.get('id')
 
         # Step 2: Create expert node in the graph
@@ -36,10 +53,10 @@ class ExpertService:
                     page += 1
                     requests_made += 1
                 else:
-                    print(f"Failed to fetch works for {openalex_id}: {response.status_code} - {response.text}")
+                    logger.error(f"Failed to fetch works for {openalex_id}: {response.status_code} - {response.text}")
                     if response.status_code == 429:  # Rate limit exceeded
                         delay = min(delay * 2, MAX_BACKOFF_DELAY)
-                        print(f"Rate limit exceeded, retrying in {delay} seconds")
+                        logger.warning(f"Rate limit exceeded, retrying in {delay} seconds")
                         time.sleep(delay)
                     break
 
@@ -51,6 +68,9 @@ class ExpertService:
 
         # Step 4: Extract domain, field, and subfield from works
         result = []
+        seen_domains = set()  # Track already created domains
+        seen_fields = set()   # Track already created fields
+        seen_subfields = set()  # Track already created subfields
         for work in works:
             if 'topics' in work and work['topics']:
                 for topic in work['topics']:
@@ -58,7 +78,7 @@ class ExpertService:
                     domain_name = topic.get('domain', {}).get('display_name', 'Unknown Domain')
                     field_name = topic.get('field', {}).get('display_name', 'Unknown Field')
                     subfield_name = topic.get('subfield', {}).get('display_name', 'Unknown Subfield')
-                    
+
                     # Add to result list
                     result.append({
                         'domain': domain_name,
@@ -66,68 +86,70 @@ class ExpertService:
                         'subfield': subfield_name
                     })
 
-                    # Step 5: Create domain, field, and subfield nodes and relationships
-                    # Create domain node if it doesn't exist
-                    self.graph.create_domain_node(
-                        domain_id=domain_name,  # Assuming domain name as ID
-                        name=domain_name
-                    )
-                    # Create relationship between the expert and the domain
-                    self.graph.create_related_to_relationship(orcid, domain_name)
-                    
-                    # Create field node if it doesn't exist
-                    self.graph.create_field_node(
-                        field_id=field_name,  # Assuming field name as ID
-                        name=field_name
-                    )
-                    # Create relationship between the expert and the field
-                    self.graph.create_related_to_field_relationship(orcid, field_name)
-                    
-                    # Create subfield node if it doesn't exist
-                    if subfield_name != 'Unknown Subfield':  # Only create if there is a valid subfield
-                        self.graph.create_subfield_node(
-                            subfield_id=subfield_name,  # Assuming subfield name as ID
-                            name=subfield_name
-                        )
-                        # Create relationship between the expert and the subfield
-                        self.graph.create_related_to_subfield_relationship(orcid, subfield_name)
+                    # Create domain, field, and subfield nodes if not seen before
+                    if domain_name not in seen_domains:
+                        self.graph.create_domain_node(domain_id=domain_name, name=domain_name)
+                        seen_domains.add(domain_name)
+                    if field_name not in seen_fields:
+                        self.graph.create_field_node(field_id=field_name, name=field_name)
+                        seen_fields.add(field_name)
+                    if subfield_name != 'Unknown Subfield' and subfield_name not in seen_subfields:
+                        self.graph.create_subfield_node(subfield_id=subfield_name, name=subfield_name)
+                        seen_subfields.add(subfield_name)
 
-        # Step 6: Calculate expert similarity
+        # Step 5: Calculate expert similarity
         self.graph.calculate_similar_experts(orcid)
+
+        # Print or log the extracted results for debugging
+        logger.info(f"Expert data for {orcid}: {expert_data}")
+        logger.info(f"Extracted topics and fields: {result}")
+        print(f"Expert data for ORCID {orcid}: {expert_data}")
+        print(f"Extracted topics and fields: {result}")
 
         return expert_data
 
-    def get_similar_experts(self, orcid: str, limit: int = 10):
-        """Get similar experts based on shared fields and subfields."""
+    
+    def get_similar_experts(self, orcid, limit=10):
+        # Ensure the ORCID format is consistent
+        if not orcid.startswith("https://orcid.org/"):
+            orcid = f"https://orcid.org/{orcid}"
+
         query = """
-        MATCH (e1:Expert {orcid: $orcid})-[s:RELATED_TO]->(f:Field), 
-              (e1)-[:RELATED_TO]->(sf:Subfield), 
-              (e2:Expert)-[s2:RELATED_TO]->(f), 
-              (e2)-[:RELATED_TO]->(sf) 
-        WHERE e1 <> e2 
-        RETURN e2.orcid AS similar_orcid, e2.name AS name, 
-               f.name AS shared_field, sf.name AS shared_subfield
+        MATCH (e1:Expert {orcid: $orcid})-[:RELATED_TO]->(f:Field),
+            (e1)-[:RELATED_TO]->(sf:Subfield),
+            (e2:Expert)-[:RELATED_TO]->(f),
+            (e2)-[:RELATED_TO]->(sf)
+        WHERE e1 <> e2
+        RETURN e2.orcid AS similar_orcid, e2.name AS name,
+            f.name AS shared_field, sf.name AS shared_subfield
+        LIMIT 10
         """
-        
-        params = {'orcid': orcid}
-        
-        # Execute the query to find similar experts
-        result = self.graph.query(query, params)
-        
-        # Log the raw result to see its structure (for debugging purposes)
-        print("Raw query result:", result)
-        
-        result_set = result.result_set if result else []
-        
-        similar_experts = []
-        for record in result_set:
-            similar_experts.append(
-                {
-                    'orcid': record[0],
-                    'name': record[1],
-                    'shared_field': record[2],
-                    'shared_subfield': record[3]
-                }
-            )
-        
-        return similar_experts
+
+        try:
+            # Using RedisGraph's query method through GraphDatabase instance
+            result = self.graph.query_graph(query)  # Removed parameters here
+
+            # If result_set is empty, log that there's no data
+            if not result:
+                logger.info(f"No similar experts found for ORCID: {orcid}")
+                return []
+
+            similar_experts = []
+            for record in result:
+                if len(record) >= 4:
+                    similar_experts.append(
+                        {
+                            'orcid': record[0],
+                            'name': record[1],
+                            'shared_field': record[2],
+                            'shared_subfield': record[3]
+                        }
+                    )
+                else:
+                    logger.warning(f"Unexpected record format: {record}")
+            
+            return similar_experts
+
+        except Exception as e:
+            logger.error(f"Error executing query for ORCID {orcid}: {e}")
+            return []

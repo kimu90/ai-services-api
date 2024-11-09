@@ -5,8 +5,5 @@ https://orcid.org/0000-0002-3041-6336,Life Sciences,Agricultural and Biological 
 https://orcid.org/0000-0002-3417-7926,Life Sciences,Agricultural and Biological Sciences,Aquatic Science
 https://orcid.org/0000-0002-3417-7926,Life Sciences,Agricultural and Biological Sciences,Aquatic Science
 
-GRAPH.QUERY reco_graph "MATCH (e1:Expert {orcid: 'https://orcid.org/0000-0002-3417-7926'})-[s:RELATED_TO]->(f:Field), 
-                                (e1)-[:RELATED_TO]->(sf:Subfield), 
-                                (e2:Expert {orcid: 'https://orcid.org/0000-0002-3041-6336'})-[s2:RELATED_TO]->(f), 
-                                (e2)-[:RELATED_TO]->(sf) 
-                         RETURN e1.orcid AS orcid_1, e2.orcid AS orcid_2, f.name AS field, sf.name AS subfield"
+GRAPH.QUERY reco_graph "MATCH (e1:Expert {orcid: 'https://orcid.org/0000-0002-3417-7926'})-[:RELATED_TO]->(f:Field)<-[:RELATED_TO]-(e2:Expert), (e1)-[:RELATED_TO]->(sf:Subfield)<-[:RELATED_TO]-(e2) WHERE e1 <> e2 RETURN e1.orcid AS orcid_1, e2.orcid AS orcid_2, f.name AS shared_field, sf.name AS shared_subfield"
+
