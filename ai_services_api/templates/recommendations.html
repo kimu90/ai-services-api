@@ -59,7 +59,7 @@
 
             try {
                 showLoading();
-                const response = await fetch(`http://localhost:8000/recommendation/recommend/?orcid=${orcid}`, {
+                const response = await fetch(`http://localhost:8000/recommendation/recommendation/?orcid=${orcid}`, {
                     method: 'GET',
                     headers: {
                         'Content-Type': 'application/json',
@@ -92,21 +92,33 @@
                 const card = document.createElement('div');
                 card.classList.add('bg-gray-800', 'rounded-lg', 'shadow-md', 'hover:shadow-xl', 'transition-shadow', 'p-6', 'border', 'border-gray-700');
 
+                // Expert Name
                 const name = document.createElement('h3');
                 name.classList.add('text-xl', 'font-semibold', 'mb-2');
                 name.textContent = expert.name;
 
+                // Expert ORCID
                 const orcid = document.createElement('div');
                 orcid.classList.add('text-gray-400', 'mb-2');
                 orcid.textContent = `ORCID: ${expert.orcid}`;
 
-                const similarity = document.createElement('div');
-                similarity.classList.add('text-green-400', 'font-medium');
-                similarity.textContent = `Similarity Score: ${expert.similarity_score.toFixed(2)}`;
+                // Shared Field
+                const sharedField = document.createElement('div');
+                sharedField.classList.add('text-gray-300', 'mb-2');
+                sharedField.textContent = `Shared Field: ${expert.shared_field || 'N/A'}`;
 
+                // Shared Subfield
+                const sharedSubfield = document.createElement('div');
+                sharedSubfield.classList.add('text-gray-300', 'mb-4');
+                sharedSubfield.textContent = `Shared Subfield: ${expert.shared_subfield || 'N/A'}`;
+
+                // Append all the elements to the card
                 card.appendChild(name);
                 card.appendChild(orcid);
-                card.appendChild(similarity);
+                card.appendChild(sharedField);
+                card.appendChild(sharedSubfield);
+
+                // Add the card to the recommendations container
                 recommendationsContainer.appendChild(card);
             });
         }

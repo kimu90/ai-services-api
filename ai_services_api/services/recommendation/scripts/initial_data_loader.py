@@ -1,8 +1,9 @@
 import asyncio
-from typing import List, Union
+from typing import List, Union, Dict, Any
 import csv
 from pathlib import Path
 import logging
+import time
 from ai_services_api.services.recommendation.services.expert_service import ExpertService
 from ai_services_api.services.recommendation.core.database import GraphDatabase
 
@@ -77,26 +78,46 @@ class DataLoader:
             logger.error(f"Error reading ORCIDs from file: {e}")
             raise
 
-    def verify_graph(self):
+    def verify_graph(self) -> Dict[str, Any]:
         """
-        Verify that the graph has been populated
+        Verify the graph's integrity and return statistics.
         
         Returns:
-            Dictionary containing graph statistics
+            Dict containing verification results and statistics
         """
         try:
-            stats = self.graph.get_graph_stats()
+            # Get basic statistics
+            stats = self.get_graph_stats()
             
-            # Log graph statistics
-            logger.info("Graph Statistics:")
-            logger.info(f"Number of Expert nodes: {stats['expert_count']}")
-            logger.info(f"Number of Domain nodes: {stats['domain_count']}")
-            logger.info(f"Number of Field nodes: {stats['field_count']}")
-            logger.info(f"Number of Subfield nodes: {stats['subfield_count']}")
-            logger.info(f"Number of relationships: {stats['relationship_count']}")
+            # Verify node connections
+            orphaned_experts = self.query_graph("""
+                MATCH (e:Expert)
+                WHERE NOT (e)-[:RELATED_TO]->()
+                RETURN COUNT(e) as count
+            """)[0][0]
             
-            return stats
+            orphaned_domains = self.query_graph("""
+                MATCH (d:Domain)
+                WHERE NOT ()-[:RELATED_TO]->(d)
+                RETURN COUNT(d) as count
+            """)[0][0]
+            
+            verification_results = {
+                **stats,
+                'orphaned_experts': orphaned_experts,
+                'orphaned_domains': orphaned_domains,
+                'verification_timestamp': time.time(),
+                'status': 'healthy' if orphaned_experts == 0 and orphaned_domains == 0 else 'warning'
+            }
+            
+            logger.info(f"Graph verification complete: {verification_results}")
+            return verification_results
             
         except Exception as e:
-            logger.error(f"Error verifying graph: {e}")
-            raise
+            logger.error(f"Error during graph verification: {str(e)}")
+            verification_results = {
+                'error': str(e),
+                'verification_timestamp': time.time(),
+                'status': 'error'
+            }
+            return verification_results

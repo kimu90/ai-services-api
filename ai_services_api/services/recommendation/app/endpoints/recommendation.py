@@ -2,6 +2,8 @@ from fastapi import APIRouter, HTTPException
 from typing import List
 from ai_services_api.services.recommendation.schemas.expert import ExpertCreate, ExpertResponse, SimilarExpert
 from ai_services_api.services.recommendation.services.initial_expert_service import ExpertService
+from ai_services_api.services.recommendation.services.expert_service import ExpertsService
+
 import logging
 
 router = APIRouter()
@@ -13,7 +15,7 @@ logger = logging.getLogger(__name__)
 @router.post("/", response_model=ExpertResponse)
 async def create_expert(expert: ExpertCreate):
     """Add a new expert to the recommendation system"""
-    service = ExpertService()
+    service = ExpertsService()
     result = await service.add_expert(expert.orcid)
     if not result:
         logger.error(f"Expert not found in OpenAlex for ORCID: {expert.orcid}")

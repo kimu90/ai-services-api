@@ -1,3 +1,4 @@
+from typing import List, Dict, Any, Optional
 import logging
 import requests
 import time
@@ -71,10 +72,10 @@ class ExpertService:
         seen_domains = set()  # Track already created domains
         seen_fields = set()   # Track already created fields
         seen_subfields = set()  # Track already created subfields
+
         for work in works:
             if 'topics' in work and work['topics']:
                 for topic in work['topics']:
-                    # Extract the domain, field, and subfield information
                     domain_name = topic.get('domain', {}).get('display_name', 'Unknown Domain')
                     field_name = topic.get('field', {}).get('display_name', 'Unknown Field')
                     subfield_name = topic.get('subfield', {}).get('display_name', 'Unknown Subfield')
@@ -86,67 +87,65 @@ class ExpertService:
                         'subfield': subfield_name
                     })
 
-                    # Create domain, field, and subfield nodes if not seen before
+                    # Create nodes and relationships if not seen before
                     if domain_name not in seen_domains:
                         self.graph.create_domain_node(domain_id=domain_name, name=domain_name)
+                        self.graph.create_related_to_relationship(orcid, domain_name)
                         seen_domains.add(domain_name)
+                    
                     if field_name not in seen_fields:
                         self.graph.create_field_node(field_id=field_name, name=field_name)
+                        self.graph.create_related_to_field_relationship(orcid, field_name)
                         seen_fields.add(field_name)
+                    
                     if subfield_name != 'Unknown Subfield' and subfield_name not in seen_subfields:
                         self.graph.create_subfield_node(subfield_id=subfield_name, name=subfield_name)
+                        self.graph.create_related_to_subfield_relationship(orcid, subfield_name)
                         seen_subfields.add(subfield_name)
-
-        # Step 5: Calculate expert similarity
-        self.graph.calculate_similar_experts(orcid)
-
-        # Print or log the extracted results for debugging
-        logger.info(f"Expert data for {orcid}: {expert_data}")
-        logger.info(f"Extracted topics and fields: {result}")
-        print(f"Expert data for ORCID {orcid}: {expert_data}")
-        print(f"Extracted topics and fields: {result}")
 
         return expert_data
 
-    
-    def get_similar_experts(self, orcid, limit=10):
+    def get_similar_experts(self, orcid: str, limit: int = 10) -> List[Dict[str, Any]]:
+        """Get similar experts based on shared fields and subfields."""
         # Ensure the ORCID format is consistent
         if not orcid.startswith("https://orcid.org/"):
             orcid = f"https://orcid.org/{orcid}"
 
         query = """
-        MATCH (e1:Expert {orcid: $orcid})-[:RELATED_TO]->(f:Field),
+         MATCH (e1:Expert {orcid: $orcid})-[:RELATED_TO]->(f:Field),
             (e1)-[:RELATED_TO]->(sf:Subfield),
             (e2:Expert)-[:RELATED_TO]->(f),
             (e2)-[:RELATED_TO]->(sf)
         WHERE e1 <> e2
-        RETURN e2.orcid AS similar_orcid, e2.name AS name,
-            f.name AS shared_field, sf.name AS shared_subfield
-        LIMIT 10
+        RETURN e2.orcid AS similar_orcid,
+            e2.name AS name,
+            COLLECT(DISTINCT f.name) AS shared_fields,
+            COLLECT(DISTINCT sf.name) AS shared_subfields
+        LIMIT $limit
+
         """
 
         try:
-            # Using RedisGraph's query method through GraphDatabase instance
-            result = self.graph.query_graph(query)  # Removed parameters here
-
-            # If result_set is empty, log that there's no data
-            if not result:
-                logger.info(f"No similar experts found for ORCID: {orcid}")
-                return []
+            parameters = {
+                'orcid': orcid,
+                'limit': limit
+            }
+            result = self.graph.query_graph(query, parameters=parameters)
 
             similar_experts = []
             for record in result:
                 if len(record) >= 4:
-                    similar_experts.append(
-                        {
-                            'orcid': record[0],
-                            'name': record[1],
-                            'shared_field': record[2],
-                            'shared_subfield': record[3]
-                        }
-                    )
+                    similar_experts.append({
+                        'orcid': record[0],
+                        'name': record[1],
+                        'shared_field': record[2],
+                        'shared_subfield': record[3]
+                    })
                 else:
                     logger.warning(f"Unexpected record format: {record}")
+
+            if not similar_experts:
+                logger.info(f"No similar experts found for ORCID: {orcid}")
             
             return similar_experts
 

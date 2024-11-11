@@ -1,10 +1,13 @@
 from pydantic import BaseModel
 from typing import List
+from typing import Optional
 
 class SimilarExpert(BaseModel):
     orcid: str
     name: str
-    similarity_score: float
+    shared_field: List[str]  
+    shared_subfield: List[str] 
+    
 
 class ExpertBase(BaseModel):
     orcid: str
@@ -14,4 +17,7 @@ class ExpertCreate(ExpertBase):
 
 class ExpertResponse(BaseModel):
     orcid: str
-    similar_experts: List[SimilarExpert] = []
+    orcid: str
+    name: str
+    shared_field: str
+    shared_subfield: str

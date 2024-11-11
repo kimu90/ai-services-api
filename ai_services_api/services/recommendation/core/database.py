@@ -9,8 +9,8 @@ from dotenv import load_dotenv
 import os
 import time
 import backoff
+from urllib.parse import urlparse, parse_qs
 
-# Load environment variables from .env file
 load_dotenv()
 
 # Set up logging configuration
@@ -46,14 +46,41 @@ class GraphDatabase:
         try:
             logger.info(f"Attempting to connect to Redis at {self.redis_url}")
             
-            # Parse Redis URL
-            url_parts = redis.connection.URL.from_url(self.redis_url)
+            # Parse the Redis URL
+            parsed = urlparse(self.redis_url)
+            
+            # Extract host and port
+            hostname = parsed.hostname or 'redis-graph'
+            port = parsed.port or 6380
+            
+            # Extract username and password if present
+            username = None
+            password = None
+            if '@' in parsed.netloc:
+                auth = parsed.netloc.split('@')[0]
+                if ':' in auth:
+                    if '@' in auth:
+                        username, password = auth.split(':')
+                    else:
+                        password = auth.split(':')[1]
+            
+            # Extract database number
+            db = 0
+            if parsed.path:
+                try:
+                    db = int(parsed.path.lstrip('/'))
+                except ValueError:
+                    pass
+            
+            # Parse query parameters
+            query_params = parse_qs(parsed.query)
             
             self.redis_client = StrictRedis(
-                host=url_parts.hostname,
-                port=url_parts.port or 6380,
-                db=url_parts.database or 0,
-                password=url_parts.password,
+                host=hostname,
+                port=port,
+                db=db,
+                username=username,
+                password=password,
                 decode_responses=True,
                 socket_connect_timeout=int(os.getenv('REDIS_CONNECT_TIMEOUT', '5')),
                 socket_timeout=int(os.getenv('REDIS_SOCKET_TIMEOUT', '5')),
@@ -115,7 +142,7 @@ class GraphDatabase:
             logger.warning("Redis connection lost, attempting to reconnect...")
             self._initialize_connection()
 
-    def query_graph(self, query: str, params: Optional[dict] = None) -> List[Any]:
+    def query_graph(self, query: str, parameters: Optional[dict] = None) -> List[Any]:
         """Execute a graph query with connection check and retries"""
         self.ensure_connection()
         
@@ -126,7 +153,11 @@ class GraphDatabase:
         )
         def execute_query():
             try:
-                result = self.graph.query(query, params) if params else self.graph.query(query)
+                # Make sure we're passing parameters correctly to redisgraph-py
+                if parameters:
+                    result = self.graph.query(query, parameters)
+                else:
+                    result = self.graph.query(query)
                 return [record for record in result.result_set if record]
             except Exception as e:
                 logger.error(f"Error executing RedisGraph query: {str(e)}")
@@ -140,7 +171,7 @@ class GraphDatabase:
         max_tries=3
     )
     def get_author_openalex_id(self, orcid: str) -> tuple:
-        """Fetch OpenAlex ID for an author using their ORCID with retries."""
+        """Fetch OpenAlex ID for an author using their ORCID with retries.""" 
         try:
             response = requests.get(
                 f"{self.openalex_api_url}/authors",
@@ -159,56 +190,6 @@ class GraphDatabase:
         except requests.exceptions.RequestException as e:
             logger.error(f"Error fetching OpenAlex ID for ORCID {orcid}: {str(e)}")
             raise
-
-    def get_author_works_by_openalex_id(self, openalex_id: str):
-        """Fetch works for an author using their OpenAlex ID and extract domain, field, and subfield information."""
-        try:
-            response = requests.get(f"{self.openalex_api_url}/works", params={"filter": f"authorships.author.id:{openalex_id}"})
-            if response.status_code == 200:
-                works = response.json().get('results', [])
-                topics_info = []
-                for work in works:
-                    for topic in work.get('topics', []):
-                        domain = topic.get('domain')
-                        field = topic.get('field')
-                        subfield = topic.get('subfield')
-                        
-                        # Append the topic information if at least one of domain, field, or subfield is present
-                        if domain or field or subfield:
-                            topics_info.append({
-                                'domain': self.extract_domain_info(domain) if domain else None,
-                                'field': self.extract_field_info(field) if field else None,
-                                'subfield': self.extract_subfield_info(subfield) if subfield else None
-                            })
-                logger.info(f"Successfully fetched works for OpenAlex ID: {openalex_id}")
-                return topics_info
-            else:
-                logger.warning(f"No works found for OpenAlex author ID: {openalex_id}")
-                raise ValueError(f"No works found for OpenAlex author ID: {openalex_id}")
-        except requests.exceptions.RequestException as e:
-            logger.error(f"Error fetching works for OpenAlex ID {openalex_id}: {e}")
-            raise
-
-    def extract_domain_info(self, domain):
-        """Extract domain details from the domain object."""
-        return {
-            'id': domain['id'],
-            'display_name': domain['display_name']
-        }
-
-    def extract_field_info(self, field):
-        """Extract field details from the field object."""
-        return {
-            'id': field['id'],
-            'display_name': field['display_name']
-        }
-
-    def extract_subfield_info(self, subfield):
-        """Extract subfield details from the subfield object."""
-        return {
-            'id': subfield['id'],
-            'display_name': subfield['display_name']
-        }
 
     def create_expert_node(self, orcid: str, name: str):
         """Create or update an Expert node."""
@@ -261,24 +242,37 @@ class GraphDatabase:
         self.graph.query(query, params)
         logger.info(f"RELATED_TO relationship created between Expert {orcid} and Domain {domain_id}")
 
-    def create_related_to_field_relationship(self, orcid: str, field_id: str):
-        """Create a RELATED_TO relationship between Expert and Field."""
-        query = """
-        MATCH (e:Expert {orcid: $orcid})
-        MATCH (f:Field {id: $field_id})
-        MERGE (e)-[r:RELATED_TO]->(f)
+    def get_graph_stats(self) -> Dict[str, int]:
         """
-        params = {'orcid': orcid, 'field_id': field_id}
-        self.graph.query(query, params)
-        logger.info(f"RELATED_TO relationship created between Expert {orcid} and Field {field_id}")
+        Get statistics about the graph database.
+        
+        Returns:
+            Dict containing counts of different node types and relationships
+        """
+        self.ensure_connection()
+        
+        try:
+            # Count nodes by type
+            expert_count = self.query_graph("MATCH (e:Expert) RETURN COUNT(e) as count")[0][0]
+            domain_count = self.query_graph("MATCH (d:Domain) RETURN COUNT(d) as count")[0][0]
+            field_count = self.query_graph("MATCH (f:Field) RETURN COUNT(f) as count")[0][0]
+            subfield_count = self.query_graph("MATCH (sf:Subfield) RETURN COUNT(sf) as count")[0][0]
 
-    def create_related_to_subfield_relationship(self, orcid: str, subfield_id: str):
-        """Create a RELATED_TO relationship between Expert and Subfield."""
-        query = """
-        MATCH (e:Expert {orcid: $orcid})
-        MATCH (sf:Subfield {id: $subfield_id})
-        MERGE (e)-[r:RELATED_TO]->(sf)
-        """
-        params = {'orcid': orcid, 'subfield_id': subfield_id}
-        self.graph.query(query, params)
-        logger.info(f"RELATED_TO relationship created between Expert {orcid} and Subfield {subfield_id}")
+            # Count relationships
+            related_to_count = self.query_graph("MATCH ()-[r:RELATED_TO]->() RETURN COUNT(r) as count")[0][0]
+
+            return {
+                'Expert Count': expert_count,
+                'Domain Count': domain_count,
+                'Field Count': field_count,
+                'Subfield Count': subfield_count,
+                'RELATED_TO Relationships': related_to_count
+            }
+
+        except Exception as e:
+            logger.error(f"Error getting graph stats: {str(e)}")
+            return {}
+
+# Instantiate GraphDatabase class
+graph_db = GraphDatabase()
+
