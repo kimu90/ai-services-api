@@ -1,22 +1,27 @@
 import logging
 import redis
-from redisgraph import Graph
+from redisgraph import Graph, Node
 import requests
-from ai_services_api.services.recommendation.config import get_settings
 from redis import StrictRedis, ConnectionError, TimeoutError
-from typing import Optional, List, Dict
-from tenacity import retry, stop_after_attempt, wait_exponential
+from typing import Optional, List, Dict, Any
+from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
+from dotenv import load_dotenv
+import os
+import time
+import backoff
 
-
+# Load environment variables from .env file
+load_dotenv()
 
 # Set up logging configuration
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
 logger = logging.getLogger(__name__)
 
-settings = get_settings()
-
 class GraphDatabase:
-    def __init__(self, max_retries: int = 3):
+    def __init__(self, max_retries: int = 5):
         """
         Initialize Redis connection with retry logic
         
@@ -24,102 +29,135 @@ class GraphDatabase:
             max_retries: Maximum number of connection attempts
         """
         self.max_retries = max_retries
+        self.redis_url = os.getenv('REDIS_GRAPH_URL', 'redis://redis-graph:6380')
+        self.openalex_api_url = os.getenv('OPENALEX_API_URL', 'https://api.openalex.org')
+        self.redis_client = None
+        self.graph = None
         self._initialize_connection()
 
-    @retry(
-        stop=stop_after_attempt(3),
-        wait=wait_exponential(multiplier=1, min=4, max=10),
-        reraise=True
+    @backoff.on_exception(
+        backoff.expo,
+        (ConnectionError, TimeoutError),
+        max_tries=5,
+        max_time=30
     )
-    def _initialize_connection(self):
-        """Initialize Redis connection with retry logic"""
+    def _initialize_connection(self) -> None:
+        """Initialize Redis connection with exponential backoff retry logic"""
         try:
+            logger.info(f"Attempting to connect to Redis at {self.redis_url}")
+            
+            # Parse Redis URL
+            url_parts = redis.connection.URL.from_url(self.redis_url)
+            
             self.redis_client = StrictRedis(
-                host='redis',  # Try localhost first
-                port=6379,        # Default Redis port
-                db=0,
+                host=url_parts.hostname,
+                port=url_parts.port or 6380,
+                db=url_parts.database or 0,
+                password=url_parts.password,
                 decode_responses=True,
-                socket_connect_timeout=5,
-                socket_timeout=5,
+                socket_connect_timeout=int(os.getenv('REDIS_CONNECT_TIMEOUT', '5')),
+                socket_timeout=int(os.getenv('REDIS_SOCKET_TIMEOUT', '5')),
                 retry_on_timeout=True,
-                health_check_interval=30
+                health_check_interval=int(os.getenv('REDIS_HEALTH_CHECK_INTERVAL', '30'))
             )
             
-            # Test connection
             if not self._test_connection():
-                # If localhost fails, try redis-graph
-                self.redis_client = StrictRedis(
-                    host='redis-graph',
-                    port=6380,        # Try default port
-                    db=0,
-                    decode_responses=True,
-                    socket_connect_timeout=5,
-                    socket_timeout=5,
-                    retry_on_timeout=True,
-                    health_check_interval=30
-                )
-                
-                if not self._test_connection():
-                    raise ConnectionError("Could not connect to Redis on any configured host")
+                raise ConnectionError(f"Could not connect to Redis at {self.redis_url}")
 
-            self.graph = Graph('reco_graph', self.redis_client)
-            logger.info("Successfully connected to Redis and initialized RedisGraph")
+            self.graph = Graph(
+                os.getenv('REDIS_GRAPH_NAME', 'reco_graph'),
+                self.redis_client
+            )
+            logger.info(f"Successfully connected to Redis at {self.redis_url}")
             
-        except ConnectionError as e:
-            logger.error(f"Redis connection error: {e}")
+        except (ConnectionError, TimeoutError) as e:
+            logger.error(f"Redis connection error: {str(e)}")
             raise
         except Exception as e:
-            logger.error(f"Unexpected error while connecting to Redis: {e}")
+            logger.error(f"Unexpected error while connecting to Redis: {str(e)}")
             raise
 
+    @backoff.on_exception(
+        backoff.expo,
+        (ConnectionError, TimeoutError),
+        max_tries=3
+    )
     def _test_connection(self) -> bool:
-        """Test Redis connection"""
+        """Test Redis connection with retries"""
         try:
             return self.redis_client.ping()
-        except (ConnectionError, TimeoutError):
+        except (ConnectionError, TimeoutError) as e:
+            logger.error(f"Failed to ping Redis at {self.redis_url}: {str(e)}")
             return False
 
     def get_connection_info(self) -> dict:
         """Get current connection information"""
+        if not self.redis_client:
+            return {'status': 'disconnected'}
+            
+        conn_kwargs = self.redis_client.connection_pool.connection_kwargs
         return {
-            'host': self.redis_client.connection_pool.connection_kwargs['host'],
-            'port': self.redis_client.connection_pool.connection_kwargs['port'],
-            'db': self.redis_client.connection_pool.connection_kwargs['db']
+            'host': conn_kwargs.get('host', 'redis-graph'),
+            'port': conn_kwargs.get('port', 6380),
+            'db': conn_kwargs.get('db', 0),
+            'url': self.redis_url,
+            'status': 'connected' if self._test_connection() else 'disconnected'
         }
 
-    def ensure_connection(self):
-        """Ensure Redis connection is alive"""
-        try:
-            if not self._test_connection():
-                logger.warning("Redis connection lost, attempting to reconnect...")
-                self._initialize_connection()
-        except Exception as e:
-            logger.error(f"Error ensuring Redis connection: {e}")
-            raise
+    @backoff.on_exception(
+        backoff.expo,
+        (ConnectionError, TimeoutError),
+        max_tries=3
+    )
+    def ensure_connection(self) -> None:
+        """Ensure Redis connection is alive with retries"""
+        if not self.redis_client or not self._test_connection():
+            logger.warning("Redis connection lost, attempting to reconnect...")
+            self._initialize_connection()
 
-    def query_graph(self, query: str, params: Optional[dict] = None):
-        """Execute a graph query with connection check"""
-        self.ensure_connection()  # Verify connection before query
-        try:
-            result = self.graph.query(query, params) if params else self.graph.query(query)
-            return [record for record in result.result_set if record]
-        except Exception as e:
-            logger.error(f"Error executing RedisGraph query: {e}")
-            raise
+    def query_graph(self, query: str, params: Optional[dict] = None) -> List[Any]:
+        """Execute a graph query with connection check and retries"""
+        self.ensure_connection()
+        
+        @backoff.on_exception(
+            backoff.expo,
+            (ConnectionError, TimeoutError),
+            max_tries=3
+        )
+        def execute_query():
+            try:
+                result = self.graph.query(query, params) if params else self.graph.query(query)
+                return [record for record in result.result_set if record]
+            except Exception as e:
+                logger.error(f"Error executing RedisGraph query: {str(e)}")
+                raise
 
-    def get_author_openalex_id(self, orcid: str):
-        """Fetch OpenAlex ID for an author using their ORCID."""
+        return execute_query()
+
+    @backoff.on_exception(
+        backoff.expo,
+        requests.exceptions.RequestException,
+        max_tries=3
+    )
+    def get_author_openalex_id(self, orcid: str) -> tuple:
+        """Fetch OpenAlex ID for an author using their ORCID with retries."""
         try:
-            response = requests.get(f"{self.openalex_api_url}/authors", params={"filter": f"orcid:{orcid}"})
-            if response.status_code == 200 and response.json().get('results'):
+            response = requests.get(
+                f"{self.openalex_api_url}/authors",
+                params={"filter": f"orcid:{orcid}"},
+                timeout=10
+            )
+            response.raise_for_status()
+            
+            if response.json().get('results'):
                 author_data = response.json()['results'][0]
                 logger.info(f"Successfully fetched OpenAlex ID for ORCID: {orcid}")
-                return author_data['id'], author_data['orcid']
+                return author_data['id'], author_data.get('orcid')
             else:
                 logger.warning(f"No OpenAlex author found with ORCID: {orcid}")
                 raise ValueError(f"No OpenAlex author found with ORCID: {orcid}")
         except requests.exceptions.RequestException as e:
-            logger.error(f"Error fetching OpenAlex ID for ORCID {orcid}: {e}")
+            logger.error(f"Error fetching OpenAlex ID for ORCID {orcid}: {str(e)}")
             raise
 
     def get_author_works_by_openalex_id(self, openalex_id: str):
@@ -244,29 +282,3 @@ class GraphDatabase:
         params = {'orcid': orcid, 'subfield_id': subfield_id}
         self.graph.query(query, params)
         logger.info(f"RELATED_TO relationship created between Expert {orcid} and Subfield {subfield_id}")
-
-    def add_expert(self, orcid: str, name: str):
-        """Add an expert and related topics to the graph."""
-        try:
-            # Create or update Expert node
-            self.create_expert_node(orcid, name)
-
-            # Fetch OpenAlex ID and Works
-            openalex_id, _ = self.get_author_openalex_id(orcid)
-            topics_info = self.get_author_works_by_openalex_id(openalex_id)
-
-            # Create or update Domain, Field, and Subfield nodes, and relationships
-            for topic in topics_info:
-                if topic['domain']:
-                    self.create_domain_node(topic['domain']['id'], topic['domain']['display_name'])
-                    self.create_related_to_relationship(orcid, topic['domain']['id'])
-                if topic['field']:
-                    self.create_field_node(topic['field']['id'], topic['field']['display_name'])
-                    self.create_related_to_field_relationship(orcid, topic['field']['id'])
-                if topic['subfield']:
-                    self.create_subfield_node(topic['subfield']['id'], topic['subfield']['display_name'])
-                    self.create_related_to_subfield_relationship(orcid, topic['subfield']['id'])
-
-        except Exception as e:
-            logger.error(f"Error adding expert {orcid}: {e}")
-            raise

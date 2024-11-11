@@ -2,12 +2,12 @@ x-aphrc-common: &aphrc-common
   build:
     context: .
     dockerfile: Dockerfile
-  volumes: &aphrc-common-volumes
+  volumes:
     - ./:/code
   working_dir: /code
-  environment: &aphrc-common-env
+  environment:
     REDIS_URL: "redis://redis:6379"
-    REDIS_GRAPH_URL: "redis://redis-graph:6379"
+    REDIS_GRAPH_URL: "redis://redis-graph:6380"
     DEBUG: "True"
     GEMINI_API_KEY: "${GEMINI_API_KEY}"
     POSTGRES_HOST: "postgres"
@@ -31,7 +31,6 @@ services:
         condition: service_healthy
     networks:
       - aphrc-network
-    # Add healthcheck for API service
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
       interval: 30s
@@ -63,21 +62,21 @@ services:
     hostname: redis-graph
     restart: always
     ports:
-      - "6380:6379"  
+      - "6380:6380"  # External:Internal port
     volumes:
       - redis-graph-data:/data
     command: >
-      redis-server
-      --loadmodule /usr/lib/redis/modules/redisgraph.so
+      redis-server 
+      --port 6380 
+      --loadmodule /usr/lib/redis/modules/redisgraph.so 
       --appendonly yes
     healthcheck:
-      test: ["CMD", "redis-cli", "-h", "localhost", "GRAPH.PROFILE", "dummy", "MATCH", "n", "RETURN", "n"]
+      test: ["CMD", "redis-cli", "-p", "6380", "ping"]
       interval: 30s
       timeout: 10s
       retries: 3
     networks:
       - aphrc-network
-
 
   postgres:
     image: postgres:15-alpine
@@ -110,6 +109,18 @@ services:
       - "5050:80"
     depends_on:
       - postgres
+    networks:
+      - aphrc-network
+
+  data-loader:
+    <<: *aphrc-common
+    container_name: data-loader
+    command: poetry run python load_data.py
+    depends_on:
+      redis:
+        condition: service_healthy
+      redis-graph:
+        condition: service_healthy
     networks:
       - aphrc-network
 

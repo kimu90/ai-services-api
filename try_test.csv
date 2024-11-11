@@ -1,0 +1,8 @@
+author_orcid
+https://orcid.org/0000-0002-3417-7926
+https://orcid.org/0000-0002-9723-8087
+https://orcid.org/0000-0002-3417-7926
+https://orcid.org/0000-0002-3417-7926
+
+
+GRAPH.QUERY reco_graph "MATCH (e1:Expert {orcid: 'https://orcid.org/0000-0002-3417-7926'}) RETURN e1"
