@@ -5,15 +5,14 @@ from typing import Optional
 class SimilarExpert(BaseModel):
     orcid: str
     name: str
-    shared_field: List[str]  
-    shared_subfield: List[str] 
+    domains: List[str]  
     
 
 class ExpertBase(BaseModel):
     orcid: str
 
 class ExpertCreate(ExpertBase):
-    pass  # This remains as is, requiring only orcid
+    orcid: str
 
 class ExpertResponse(BaseModel):
     orcid: str

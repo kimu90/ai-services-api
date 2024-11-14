@@ -112,16 +112,14 @@ class ExpertService:
             orcid = f"https://orcid.org/{orcid}"
 
         query = """
-         MATCH (e1:Expert {orcid: $orcid})-[:RELATED_TO]->(f:Field),
-            (e1)-[:RELATED_TO]->(sf:Subfield),
-            (e2:Expert)-[:RELATED_TO]->(f),
-            (e2)-[:RELATED_TO]->(sf)
-        WHERE e1 <> e2
-        RETURN e2.orcid AS similar_orcid,
+         MATCH (e1:Expert {orcid: $orcid})-[:RELATED_TO]->(d:Domain),
+            (e2:Expert)-[:RELATED_TO]->(d)
+         WHERE e1 <> e2
+         RETURN e2.orcid AS similar_orcid,
             e2.name AS name,
-            COLLECT(DISTINCT f.name) AS shared_fields,
-            COLLECT(DISTINCT sf.name) AS shared_subfields
-        LIMIT $limit
+            COLLECT(DISTINCT d.name) AS shared_domains
+         LIMIT $limit
+
 
         """
 
@@ -134,12 +132,12 @@ class ExpertService:
 
             similar_experts = []
             for record in result:
-                if len(record) >= 4:
+                if len(record) >= 3:
                     similar_experts.append({
                         'orcid': record[0],
                         'name': record[1],
-                        'shared_field': record[2],
-                        'shared_subfield': record[3]
+                        'domains': record[2],
+                        
                     })
                 else:
                     logger.warning(f"Unexpected record format: {record}")

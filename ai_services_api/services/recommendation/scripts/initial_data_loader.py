@@ -4,14 +4,14 @@ import csv
 from pathlib import Path
 import logging
 import time
-from ai_services_api.services.recommendation.services.expert_service import ExpertService
+from ai_services_api.services.recommendation.services.expert_service import ExpertsService
 from ai_services_api.services.recommendation.core.database import GraphDatabase
 
 logger = logging.getLogger(__name__)
 
 class DataLoader:
     def __init__(self):
-        self.expert_service = ExpertService()
+        self.expert_service = ExpertsService()
         self.graph = GraphDatabase()
         self.batch_size = 100
 

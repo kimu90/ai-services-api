@@ -12,6 +12,7 @@ import redis
 from dotenv import load_dotenv
 from typing import AsyncIterable, List
 
+
 # Load environment variables from the .env file
 load_dotenv()
 
