@@ -1,0 +1,149 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI Search Assistant</title>
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/tailwindcss/2.2.19/tailwind.min.css" rel="stylesheet">
+</head>
+<body class="bg-gray-900 min-h-screen">
+
+    <nav class="bg-gray-800 shadow-lg">
+        <div class="max-w-7xl mx-auto px-4">
+            <div class="flex justify-between h-16">
+                <div class="flex items-center">
+                    <span class="text-xl font-bold text-green-500">AI Search Platform</span>
+                </div>
+            </div>
+        </div>
+    </nav>
+
+    <main class="max-w-7xl mx-auto py-12 px-4 flex justify-center">
+        <div class="w-full max-w-lg">
+            <div class="bg-gray-800 rounded-lg shadow-xl border border-gray-700 overflow-hidden">
+                <!-- Search Section -->
+                <div class="p-4 space-y-4">
+                    <div class="text-center text-gray-100">
+                        <h2 class="text-2xl font-bold">How can I assist you with your search?</h2>
+                    </div>
+                    
+                    <div class="flex justify-center">
+                        <input 
+                            id="search-input" 
+                            type="text" 
+                            placeholder="Enter search query..." 
+                            class="w-full bg-gray-700 text-gray-100 rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-green-500 border border-gray-600"
+                            autocomplete="on"
+                        />
+                    </div>
+
+                    <div class="text-center mt-4">
+                        <button 
+                            onclick="performSearch()" 
+                            class="bg-green-500 hover:bg-green-600 text-white px-6 py-2 rounded-lg transition-colors duration-200"
+                        >
+                            Search
+                        </button>
+                    </div>
+
+                    <div class="text-center mt-4">
+                        <button 
+                            onclick="openFeedbackModal()" 
+                            class="text-green-500 hover:text-green-400 text-sm transition-colors duration-200"
+                        >
+                            Give Feedback
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </main>
+
+    <!-- Feedback Modal -->
+    <div id="feedbackModal" class="fixed inset-0 bg-black bg-opacity-50 hidden items-center justify-center">
+        <div class="bg-gray-800 rounded-lg p-6 max-w-md w-full mx-4">
+            <div class="flex justify-between items-center mb-4">
+                <h2 class="text-xl font-bold text-gray-100">Sentiment Analysis</h2>
+                <button onclick="closeFeedbackModal()" class="text-gray-400 hover:text-gray-200">
+                    &times;
+                </button>
+            </div>
+            <form onsubmit="analyzeSentiment(event)" class="space-y-4">
+                <input 
+                    type="text" 
+                    id="feedback" 
+                    placeholder="Enter your feedback..." 
+                    class="w-full bg-gray-700 text-gray-100 rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-green-500 border border-gray-600"
+                />
+                <button 
+                    type="submit" 
+                    class="w-full bg-green-500 hover:bg-green-600 text-white py-2 rounded-lg transition-colors duration-200"
+                >
+                    Submit Feedback
+                </button>
+            </form>
+        </div>
+    </div>
+
+    <script>
+        const feedbackModal = document.getElementById("feedbackModal");
+
+        async function performSearch() {
+            const searchQuery = document.getElementById("search-input").value;
+            if (!searchQuery) return;
+
+            try {
+                const response = await fetch("http://localhost:8000/search", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ "query": searchQuery }),
+                });
+
+                if (!response.ok) {
+                    throw new Error("Failed to fetch search results");
+                }
+
+                const searchResults = await response.json();
+                alert(`Search Results: ${JSON.stringify(searchResults)}`);
+            } catch (error) {
+                console.error("Error:", error);
+                alert("There was an error. Please try again.");
+            }
+        }
+
+        function openFeedbackModal() {
+            feedbackModal.style.display = "flex";
+        }
+
+        function closeFeedbackModal() {
+            feedbackModal.style.display = "none";
+            document.getElementById("feedback").value = "";
+        }
+
+        async function analyzeSentiment(event) {
+            event.preventDefault();
+            const feedback = document.getElementById("feedback").value;
+
+            try {
+                const response = await fetch("http://localhost:8000/sentiment/sentiment", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ "query": feedback })
+                });
+
+                if (response.ok) {
+                    const result = await response.json();
+                    alert(`Sentiment Analysis Result: ${result.sentiment}`);
+                } else {
+                    throw new Error("Error with sentiment analysis request");
+                }
+            } catch (error) {
+                console.error("Error:", error);
+                alert("Error with sentiment analysis. Please try again.");
+            }
+
+            closeFeedbackModal();
+        }
+    </script>
+</body>
+</html>

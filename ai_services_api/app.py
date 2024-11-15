@@ -3,6 +3,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import HTMLResponse
 from ai_services_api.controllers.chatbot_router import api_router as chatbot_router
+from ai_services_api.controllers.recommendation_router import api_router as search_router
+
 from ai_services_api.controllers.recommendation_router import api_router as recommendation_router
 # Create the FastAPI app instance
 app = FastAPI(title="AI Services Platform", version="0.0.1")
@@ -19,6 +21,8 @@ app.add_middleware(
 # Include the chatbot API router
 app.include_router(chatbot_router, prefix="/chatbot")
 app.include_router(recommendation_router, prefix="/recommendation")
+app.include_router(search_router, prefix="/search")
+
 # Serve static files if needed
 # app.mount("/static", StaticFiles(directory="static"), name="static")
 
@@ -35,6 +39,11 @@ async def read_chatbot():
 @app.get("/recommendation", response_class=HTMLResponse)
 async def read_recommendation():
     with open("ai_services_api/templates/recommendations.html") as f:
+        return f.read()
+
+@app.get("/search", response_class=HTMLResponse)
+async def read_search():
+    with open("ai_services_api/templates/search.html") as f:
         return f.read()
 
 # Health check endpoint
