@@ -2,10 +2,15 @@ import os
 import requests
 from dotenv import load_dotenv
 import google.generativeai as genai
-from typing import Optional, Dict, List, Any
+from typing import Optional, Dict, Any
 import psycopg2
 from psycopg2 import sql
 from urllib.parse import urlparse
+import logging
+
+# Set up logging configuration
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 # Load environment variables
 load_dotenv()
@@ -46,12 +51,12 @@ def get_db_connection():
         )
         return conn
     except psycopg2.OperationalError as e:
-        print(f"Error connecting to the database: {e}")
-        print("\nConnection Details:")
-        print(f"Database: {dbname}")
-        print(f"User: {user}")
-        print(f"Host: {host}")
-        print(f"Port: {port}")
+        logger.error(f"Error connecting to the database: {e}")
+        logger.error("\nConnection Details:")
+        logger.error(f"Database: {dbname}")
+        logger.error(f"User: {user}")
+        logger.error(f"Host: {host}")
+        logger.error(f"Port: {port}")
         raise
 
 def setup_gemini():
@@ -79,7 +84,7 @@ def summarize(title: str, abstract: str) -> Optional[str]:
         response = model.generate_content(prompt)
         return response.text.strip()
     except Exception as e:
-        print(f"Error in summarization: {e}")
+        logger.error(f"Error in summarization: {e}")
         return "Failed to generate summary"
 
 def convert_inverted_index_to_text(inverted_index: Dict) -> str:
@@ -94,7 +99,7 @@ def convert_inverted_index_to_text(inverted_index: Dict) -> str:
                 word_positions.append((pos, word))
         return ' '.join(word for _, word in sorted(word_positions))
     except Exception as e:
-        print(f"Error converting inverted index: {e}")
+        logger.error(f"Error converting inverted index: {e}")
         return "N/A"
 
 def safe_str(value: Any) -> str:
@@ -128,7 +133,7 @@ class DatabaseManager:
             return tag_id
         except Exception as e:
             self.conn.rollback()
-            print(f"Error adding tag: {e}")
+            logger.error(f"Error adding tag: {e}")
             raise
 
     def add_author(self, name: str, orcid: str, author_identifier: str) -> int:
@@ -151,7 +156,7 @@ class DatabaseManager:
             return author_id
         except Exception as e:
             self.conn.rollback()
-            print(f"Error adding author: {e}")
+            logger.error(f"Error adding author: {e}")
             raise
 
     def add_publication(self, doi: str, title: str, abstract: str, summary: str) -> None:
@@ -168,7 +173,7 @@ class DatabaseManager:
             self.conn.commit()
         except Exception as e:
             self.conn.rollback()
-            print(f"Error adding publication: {e}")
+            logger.error(f"Error adding publication: {e}")
             raise
 
     def link_publication_tag(self, doi: str, tag_id: int) -> None:
@@ -182,7 +187,7 @@ class DatabaseManager:
             self.conn.commit()
         except Exception as e:
             self.conn.rollback()
-            print(f"Error linking publication and tag: {e}")
+            logger.error(f"Error linking publication and tag: {e}")
             raise
 
     def link_author_publication(self, author_id: int, doi: str) -> None:
@@ -196,7 +201,7 @@ class DatabaseManager:
             self.conn.commit()
         except Exception as e:
             self.conn.rollback()
-            print(f"Error linking author and publication: {e}")
+            logger.error(f"Error linking author and publication: {e}")
             raise
 
     def close(self):
@@ -212,21 +217,24 @@ class OpenAlexProcessor:
         self.db = DatabaseManager()
     
     def process_works(self):
-        """Process all works and save to database."""
+        """Process works and save to database, limited to 10 publications."""
         url = f"{self.base_url}/works?filter=institutions.id:{self.institution_id}&per_page=200"
+        processed_count = 0
         
-        while url:
+        while url and processed_count < 10:
             try:
-                print(f"Fetching data from: {url}")
+                logger.info(f"Fetching data from: {url}")
                 response = requests.get(url, headers={'User-Agent': 'YourApp/1.0'})
                 response.raise_for_status()
                 data = response.json()
                 
                 if 'results' not in data:
-                    print("No results found in response")
+                    logger.warning("No results found in response")
                     break
                 
                 for work in data['results']:
+                    if processed_count >= 10:
+                        break
                     try:
                         doi = safe_str(work.get('doi'))
                         if doi == "N/A":
@@ -237,7 +245,7 @@ class OpenAlexProcessor:
                         abstract = convert_inverted_index_to_text(abstract_index)
                         
                         # Generate summary
-                        print(f"Generating summary for: {title}")
+                        logger.info(f"Generating summary for: {title}")
                         summary = summarize(title, abstract)
                         
                         # Add publication to database
@@ -245,66 +253,36 @@ class OpenAlexProcessor:
                         
                         # Process authors
                         for authorship in work.get('authorships', []):
-                            author = authorship.get('author', {})
-                            if author:
-                                name = safe_str(author.get('display_name'))
-                                orcid = safe_str(author.get('orcid'))
-                                author_id = safe_str(author.get('id'))
-                                
-                                if name != "N/A":
-                                    # Add author and link to publication
-                                    db_author_id = self.db.add_author(name, orcid, author_id)
-                                    self.db.link_author_publication(db_author_id, doi)
-                        
-                        # Process topics and add as tags
-                        for topic in work.get('topics', []):
-                            # Add domain tag
-                            domain_name = topic.get('domain', {}).get('display_name')
-                            if domain_name:
-                                tag_id = self.db.add_tag(domain_name, "Domain")
-                                self.db.link_publication_tag(doi, tag_id)
+                            author_name = authorship.get('author', {}).get('display_name')
+                            orcid = authorship.get('author', {}).get('orcid')
+                            author_identifier = authorship.get('author', {}).get('author_identifier')
                             
-                            # Add field tag
-                            field_name = topic.get('field', {}).get('display_name')
-                            if field_name:
-                                tag_id = self.db.add_tag(field_name, "Field")
-                                self.db.link_publication_tag(doi, tag_id)
-                            
-                            # Add subfield tag
-                            subfield_name = topic.get('subfield', {}).get('display_name')
-                            if subfield_name:
-                                tag_id = self.db.add_tag(subfield_name, "Subfield")
-                                self.db.link_publication_tag(doi, tag_id)
+                            author_id = self.db.add_author(author_name, orcid, author_identifier)
+                            self.db.link_author_publication(author_id, doi)
                         
-                        print(f"Processed work: {title}")
+                        # Process tags
+                        for tag in work.get('concepts', []):
+                            tag_name = tag.get('display_name')
+                            tag_id = self.db.add_tag(tag_name, 'field_of_study')
+                            self.db.link_publication_tag(doi, tag_id)
+                        
+                        processed_count += 1
+                        logger.info(f"Processed {processed_count} publications so far.")
                         
                     except Exception as e:
-                        print(f"Error processing work: {e}")
-                        continue
+                        logger.error(f"Error processing work with DOI {doi}: {e}")
                 
-                # Get next page URL
-                url = data.get('meta', {}).get('next_page')
-                if url:
-                    print("Moving to next page...")
-                
-            except requests.exceptions.RequestException as e:
-                print(f"Error fetching data: {e}")
+                # Check if there's a next page of results
+                url = data.get('meta', {}).get('next')
+                if not url:
+                    break
+            
+            except requests.RequestException as e:
+                logger.error(f"Request failed: {e}")
                 break
-            except Exception as e:
-                print(f"Unexpected error: {e}")
-                break
-        
-        self.db.close()
-        print("\nProcessing complete. Data saved to database.")
-
-def main():
-    """Main execution function."""
-    try:
-        print("Starting OpenAlex data processing...")
-        processor = OpenAlexProcessor()
-        processor.process_works()
-    except Exception as e:
-        print(f"Fatal error: {e}")
+        logger.info("Finished processing publications")
 
 if __name__ == "__main__":
-    main()
+    processor = OpenAlexProcessor()
+    processor.process_works()
+    processor.db.close()

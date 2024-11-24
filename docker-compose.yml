@@ -1,3 +1,5 @@
+version: '3.8'
+
 x-aphrc-common: &aphrc-common
   build:
     context: .
@@ -20,7 +22,7 @@ services:
     <<: *aphrc-common
     ports:
       - "8000:8000"
-    command: poetry run uvicorn ai_services_api.app:app --host 0.0.0.0 --port 8000 --reload
+    command: bash -c "python /code/index_creator.py && poetry run uvicorn ai_services_api.app:app --host 0.0.0.0 --port 8000 --reload"
     container_name: api-standalone
     depends_on:
       redis:
@@ -62,7 +64,7 @@ services:
     hostname: redis-graph
     restart: always
     ports:
-      - "6380:6380"  # External:Internal port
+      - "6380:6380"
     volumes:
       - redis-graph-data:/data
     command: >
@@ -112,18 +114,6 @@ services:
     networks:
       - aphrc-network
 
-  data-loader:
-    <<: *aphrc-common
-    container_name: data-loader
-    command: poetry run python load_data.py
-    depends_on:
-      redis:
-        condition: service_healthy
-      redis-graph:
-        condition: service_healthy
-    networks:
-      - aphrc-network
-
 networks:
   aphrc-network:
     driver: bridge
@@ -132,3 +122,5 @@ volumes:
   postgres-data:
   redis-data:
   redis-graph-data:
+  faiss-data: 
+    driver: local

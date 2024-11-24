@@ -60,8 +60,7 @@ def create_tables():
         doi VARCHAR(255) PRIMARY KEY,         -- Unique Identifier for the publication
         title TEXT NOT NULL,                  -- Title of the publication
         abstract TEXT,                        -- Abstract of the publication
-        summary TEXT,                         -- Summary of the publication
-        link TEXT                             -- Link to the publication
+        summary TEXT                          -- Summary of the publication
     );
     """
     
@@ -69,9 +68,7 @@ def create_tables():
     create_tags_table = """
     CREATE TABLE IF NOT EXISTS tags (
         tag_id SERIAL PRIMARY KEY,        -- Unique tag identifier
-        tag_name VARCHAR(255) NOT NULL,   -- Name of the tag
-        description TEXT,                 -- Optional description for the tag
-        category TEXT                     -- Optional category to organize tags (e.g., Research, Methodology)
+        tag_name VARCHAR(255) NOT NULL    -- Name of the tag
     );
     """
     
@@ -84,16 +81,13 @@ def create_tables():
     );
     """
     
-    # Create Authors Table with Name, ORCID, Author ID and Unique Constraint
+    # Create Authors Table without domain, fields, and subfields columns
     create_authors_table = """
     CREATE TABLE IF NOT EXISTS authors (
         author_id SERIAL PRIMARY KEY,         -- A system-generated unique ID for internal reference
         name TEXT NOT NULL,                   -- Author's full name (required)
         orcid VARCHAR(255),                   -- ORCID identifier (optional)
         author_identifier VARCHAR(255),       -- Author ID (optional)
-        domain TEXT,                          -- Domain or field of expertise
-        fields TEXT[],                        -- Array of fields of expertise
-        subfields TEXT[],                     -- Array of subfields of expertise
         CONSTRAINT unique_author UNIQUE (name, orcid, author_identifier)
     );
     """

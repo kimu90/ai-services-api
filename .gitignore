@@ -25,12 +25,12 @@ celerybeat-schedule
 mssql
 logs/*
 git
-static
+
 ./applications
 nginx/nginx.conf.d/auto*.conf
 tmp
 requirements.txt 
-data
+
 .DS_Store
 
 # Byte-compiled / optimized / DLL files
