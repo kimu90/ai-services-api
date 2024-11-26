@@ -1,9 +1,0 @@
-author_orcid,domain,field,subfield
-https://orcid.org/0000-0002-3417-7926,Life Sciences,Agricultural and Biological Sciences,Animal Science and Zoology
-https://orcid.org/0000-0002-9723-8087,Life Sciences,Agricultural and Biological Sciences,Animal Science and Zoology
-https://orcid.org/0000-0002-3041-6336,Life Sciences,Agricultural and Biological Sciences,Aquatic Science
-https://orcid.org/0000-0002-3417-7926,Life Sciences,Agricultural and Biological Sciences,Aquatic Science
-https://orcid.org/0000-0002-3417-7926,Life Sciences,Agricultural and Biological Sciences,Aquatic Science
-
-GRAPH.QUERY reco_graph "MATCH (e1:Expert {orcid: 'https://orcid.org/0000-0002-3417-7926'})-[:RELATED_TO]->(f:Field)<-[:RELATED_TO]-(e2:Expert), (e1)-[:RELATED_TO]->(sf:Subfield)<-[:RELATED_TO]-(e2) WHERE e1 <> e2 RETURN e1.orcid AS orcid_1, e2.orcid AS orcid_2, f.name AS shared_field, sf.name AS shared_subfield"
-

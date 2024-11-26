@@ -7,7 +7,9 @@ class Settings(BaseSettings):
     REDIS_PORT: int = 6379
     REDIS_DB: int = 0
     REDIS_PASSWORD: str = None
-    REDIS_GRAPH_URL: str = f"redis://redis-graph:6380"  
+    NEO4J_URI: str = "bolt://neo4j:7687"
+    NEO4J_USER: str = "neo4j"
+    NEO4J_PASSWORD: str = "password"
     OPENALEX_API_URL: str = "https://api.openalex.org"
 
     POSTGRES_DB: str
@@ -21,7 +23,7 @@ class Settings(BaseSettings):
         env_file = ".env"
         extra = "ignore"
 
-
 @lru_cache()
 def get_settings():
     return Settings()
+
