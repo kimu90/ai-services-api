@@ -1,15 +1,15 @@
 #!/bin/bash
 
-# Exit on any error and enable variable printing for debugging
 set -e
 set -o pipefail
 
-# Define log directory structure
 LOG_DIR="/code/logs"
 HEALTH_LOG="$LOG_DIR/health_checks.log"
 SERVICE_LOG="$LOG_DIR/services.log"
 INIT_LOG="$LOG_DIR/initialization.log"
 DEBUG_LOG="$LOG_DIR/debug.log"
+INIT_MARKER_DIR="/code/.initialization_complete"
+INIT_MARKER_FILE="$INIT_MARKER_DIR/init.complete"
 
 # Enhanced logging function with timestamps and multiple outputs
 log() {
@@ -202,10 +202,45 @@ wait_for_service() {
     log "HEALTH" "$service is ready"
 }
 
-# Main execution starts here
+# Function to safely create initialization marker
+create_init_marker() {
+    log "INFO" "Creating initialization complete marker..."
+    
+    # Ensure parent directories exist with correct permissions
+    if ! mkdir -p "$INIT_MARKER_DIR" 2>/dev/null; then
+        log "WARNING" "Failed to create marker directory, trying alternate approach..."
+        # Try to create with sudo if available
+        if command -v sudo >/dev/null 2>&1; then
+            if ! sudo mkdir -p "$INIT_MARKER_DIR"; then
+                log "ERROR" "Failed to create initialization marker directory even with elevated privileges"
+                return 1
+            fi
+            sudo chown -R "$(id -u):$(id -g)" "$INIT_MARKER_DIR"
+        else
+            log "ERROR" "Cannot create initialization marker directory"
+            return 1
+        fi
+    fi
+    
+    # Try to create the marker file
+    if ! echo "$(date '+%Y-%m-%d %H:%M:%S') - Initialization successful" > "$INIT_MARKER_FILE" 2>/dev/null; then
+        log "ERROR" "Failed to create initialization marker file"
+        return 1
+    fi
+    
+    # Verify the file was created
+    if [ -f "$INIT_MARKER_FILE" ]; then
+        log "INFO" "Successfully created initialization marker"
+        return 0
+    else
+        log "ERROR" "Initialization marker file not found after creation attempt"
+        return 1
+    fi
+}
+
 main() {
     # Check if initialization is already complete
-    if [ -f /code/.initialization_complete ]; then
+    if [ -f "$INIT_MARKER_FILE" ]; then
         log "INFO" "Previous initialization detected. Starting application..."
         exec uvicorn ai_services_api.main:app --host 0.0.0.0 --port 8000 --reload
         return
@@ -221,16 +256,12 @@ main() {
     log "INFO" "Creating necessary directories..."
     check_status "Directory creation"
 
-    # Wait for services with enhanced logging
-    log "SERVICE" "Starting service health checks"
-
     # Service checks
+    log "SERVICE" "Starting service health checks"
     log "SERVICE" "Checking PostgreSQL..."
     wait_for_service "PostgreSQL" "check_postgres postgres" 90 10
-
     log "SERVICE" "Checking Neo4j..."
     wait_for_service "Neo4j" "check_neo4j neo4j" 90 10
-
     log "SERVICE" "Checking Redis..."
     wait_for_service "Redis" "check_redis redis" 90 10
 
@@ -288,10 +319,13 @@ main() {
         log "WARNING" "Some services are not responding properly"
     fi
 
-    log "INFO" "Initialization completed at $(date)"
+    # Create initialization marker
+    if ! create_init_marker; then
+        log "ERROR" "Failed to create initialization marker"
+        exit 1
+    fi
 
-    # Create success indicator file
-    echo "$(date '+%Y-%m-%d %H:%M:%S') - Initialization successful" > /code/.initialization_complete
+    log "INFO" "Initialization completed at $(date)"
 
     # Start the FastAPI application
     log "INFO" "Starting FastAPI application..."

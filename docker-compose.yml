@@ -11,8 +11,12 @@ services:
       - ./logs/api:/code/logs:rw
       - ./models:/code/models:rw
       - ./cache:/code/cache:rw
-      - ./init-script.sh:/code/init-script.sh:ro  # Added explicit mount for init script
-    container_name: api-standalone
+      - ./init-script.sh:/code/init-script.sh:ro
+      - type: tmpfs
+        target: /code/.initialization_complete
+        tmpfs:
+          size: 1M
+          mode: 0777
     environment:
       - REDIS_URL=redis://redis:6379
       - NEO4J_URI=bolt://neo4j:7687
