@@ -9,7 +9,7 @@ services:
     volumes:
       - ./:/code:rw
       - ./logs/api:/code/logs:rw
-      - ./models:/code/models:rw
+      - ./ai_services_api/services/search/models:/code/ai_services_api/services/search/models:rw
       - ./cache:/code/cache:rw
       - ./init-script.sh:/code/init-script.sh:ro
       - type: tmpfs

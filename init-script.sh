@@ -247,9 +247,7 @@ main() {
     fi
 
     # Create necessary directories
-    mkdir -p "$LOG_DIR" /code/models/search /code/cache
     touch "$HEALTH_LOG" "$SERVICE_LOG" "$INIT_LOG" "$DEBUG_LOG"
-    chmod -R 755 /code/models /code/logs /code/cache
 
     # Start initialization
     log "INFO" "Starting initialization process at $(date)"

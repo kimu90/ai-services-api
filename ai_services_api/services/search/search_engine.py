@@ -1,61 +1,43 @@
 import faiss
 import pickle
 import os
+from pathlib import Path
 from typing import List, Dict, Optional
+from sentence_transformers import SentenceTransformer
 from ai_services_api.services.search.config import get_settings
-from ai_services_api.services.search.embedding_model import EmbeddingModel
 from ai_services_api.services.search.experts_manager import ExpertsManager
+
+class EmbeddingModel:
+    def __init__(self):
+        self.model = SentenceTransformer('sentence-transformers/all-MiniLM-L6-v2')
+        
+    def get_embedding(self, text: str) -> List[float]:
+        embeddings = self.model.encode([text], convert_to_numpy=True)
+        return embeddings
 
 class SearchEngine:
     def __init__(self, embedding_model_path=None):
-        """
-        Initialize the search engine with embedding model and FAISS index.
-        """
-        settings = get_settings()
+        self.embedding_model = EmbeddingModel()
 
-        # Use provided model path or default from settings
-        model_path = embedding_model_path or settings.MODEL_PATH
+        current_dir = Path(os.path.dirname(os.path.abspath(__file__)))
+        models_dir = current_dir.parent / 'models'
+        self.index_path = models_dir / 'faiss_index.idx'
+        self.mapping_path = models_dir / 'chunk_mapping.pkl'
 
-        # Initialize embedding model
-        self.embedding_model = EmbeddingModel(model_path)
-
-        # Get the current file's directory
-        current_dir = os.path.dirname(os.path.abspath(__file__))
+        if not os.path.isfile(self.index_path):
+            raise FileNotFoundError(f"FAISS index not found at {self.index_path}")
         
-        # Get the models folder path from the settings (changed from 'static' to 'models')
-        models_dir = os.path.join(os.path.dirname(current_dir), 'models')
+        self.index = faiss.read_index(str(self.index_path))
 
-        # Get the index and mapping paths from settings
-        index_path = settings.INDEX_PATH
-        mapping_path = settings.CHUNK_MAPPING_PATH
-
-        # Debugging: Print paths being used
-        print(f"Current directory: {current_dir}")
-        print(f"Models directory: {models_dir}")
-        print(f"Index path: {index_path}")
-        print(f"Mapping path: {mapping_path}")
-
-        # Verify that the index and mapping files exist
-        if not os.path.isfile(index_path):
-            raise FileNotFoundError(
-                f"FAISS index file not found at {index_path}. "
-                f"Current directory: {current_dir}, "
-                f"Models directory: {models_dir}"
-            )
-        
-        # Load FAISS index
-        self.index = faiss.read_index(index_path)
-
-        # Load chunk mapping
-        if not os.path.isfile(mapping_path):
-            raise FileNotFoundError(f"Chunk mapping file not found at {mapping_path}")
+        if not os.path.isfile(self.mapping_path):
+            raise FileNotFoundError(f"Chunk mapping not found at {self.mapping_path}")
             
-        with open(mapping_path, 'rb') as f:
+        with open(self.mapping_path, 'rb') as f:
             self.chunk_mapping = pickle.load(f)
 
-        # Initialize experts manager
         self.experts_manager = ExpertsManager()
 
+    # Rest of the code remains unchanged
     def search(self, query: str, k: int = 5) -> List[Dict]:
         """
         Perform semantic search on the indexed documents.

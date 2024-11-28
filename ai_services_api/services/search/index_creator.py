@@ -21,11 +21,13 @@ load_dotenv()
 
 class IndexCreator:
     def __init__(self):
-        # Define base paths
-        self.base_dir = Path(os.getenv('BASE_DIR', '/code'))
-        self.models_dir = self.base_dir / 'models' / 'search'
+        # Get the current file's directory
+        current_dir = Path(os.path.dirname(os.path.abspath(__file__)))
         
-        # Ensure directories exist
+        # Set models directory at the same level as the current file
+        self.models_dir = current_dir.parent / 'models'
+        
+        # Ensure directory exists
         self.models_dir.mkdir(parents=True, exist_ok=True)
         
         # Define file paths

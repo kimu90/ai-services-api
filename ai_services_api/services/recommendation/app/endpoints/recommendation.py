@@ -1,10 +1,8 @@
 from fastapi import APIRouter, HTTPException
 from typing import List, Dict, Any
-from ai_services_api.services.recommendation.schemas.expert import (
-    ExpertCreate, 
-    ExpertResponse, 
-    SimilarExpert
-)
+
+from ai_services_api.services.recommendation.schemas.expert import ExpertCreate, ExpertResponse, SimilarExpert
+
 from ai_services_api.services.recommendation.services.expert_service import ExpertsService
 import logging
 
