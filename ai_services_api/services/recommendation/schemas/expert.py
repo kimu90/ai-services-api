@@ -1,22 +1,21 @@
-from pydantic import BaseModel
-from typing import List
-from typing import Optional
+from pydantic import BaseModel, Field
+from typing import List, Optional
 
 class SimilarExpert(BaseModel):
     orcid: str
     name: str
-    domains: List[str]  
-    
+    shared_field_count: int = Field(0, description="Number of shared fields")
+    shared_subfield_count: int = Field(0, description="Number of shared subfields")
+    similarity_score: float = Field(0, description="Recommendation similarity score")
 
 class ExpertBase(BaseModel):
     orcid: str
 
 class ExpertCreate(ExpertBase):
-    orcid: str
+    pass
 
 class ExpertResponse(BaseModel):
     orcid: str
-    orcid: str
     name: str
-    shared_field: str
-    shared_subfield: str
+    domains_fields_subfields: List[Dict[str, str]]
+    similar_experts: List[SimilarExpert]

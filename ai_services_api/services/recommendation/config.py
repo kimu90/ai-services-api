@@ -9,7 +9,7 @@ class Settings(BaseSettings):
     REDIS_PASSWORD: str = None
     NEO4J_URI: str = "bolt://neo4j:7687"
     NEO4J_USER: str = "neo4j"
-    NEO4J_PASSWORD: str = "password"
+    NEO4J_PASSWORD: str = "password123456789!"
     OPENALEX_API_URL: str = "https://api.openalex.org"
 
     POSTGRES_DB: str

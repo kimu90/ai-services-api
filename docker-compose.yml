@@ -1,33 +1,36 @@
-x-aphrc-common: &aphrc-common
-  build:
-    context: .
-    dockerfile: Dockerfile
-  volumes:
-    - ./:/code
-  working_dir: /code
-  environment:
-    - REDIS_URL=redis://redis:6379
-    - NEO4J_URI=bolt://neo4j:7687
-    - DEBUG=True
-    - GEMINI_API_KEY=${GEMINI_API_KEY}
-    - POSTGRES_HOST=postgres
-    - POSTGRES_DB=${POSTGRES_DB:-aphrcdb}
-    - POSTGRES_USER=${POSTGRES_USER:-aphrcuser}
-    - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-kimu}
-    - NEO4J_USER=${NEO4J_USER:-neo4j}
-    - NEO4J_PASSWORD=${NEO4J_PASSWORD:-password}
-    - DATABASE_URL=postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
-
 services:
   api:
-    <<: *aphrc-common
+    build:
+      context: .
+      dockerfile: Dockerfile
     ports:
       - "8000:8000"
     command: bash /code/init-script.sh
     volumes:
-      - ./:/code
-      - ./init-script.sh:/code/init-script.sh
+      - ./:/code:rw
+      - ./logs/api:/code/logs:rw
+      - ./models:/code/models:rw
+      - ./cache:/code/cache:rw
+      - ./init-script.sh:/code/init-script.sh:ro  # Added explicit mount for init script
     container_name: api-standalone
+    environment:
+      - REDIS_URL=redis://redis:6379
+      - NEO4J_URI=bolt://neo4j:7687
+      - DEBUG=True
+      - GEMINI_API_KEY=${GEMINI_API_KEY}
+      - POSTGRES_HOST=postgres
+      - POSTGRES_DB=${POSTGRES_DB:-aphrcdb}
+      - POSTGRES_USER=${POSTGRES_USER:-aphrcuser}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-kimu}
+      - NEO4J_USER=${NEO4J_USER:-neo4j}
+      - NEO4J_PASSWORD=${NEO4J_PASSWORD:-password123456789!}
+      - DATABASE_URL=postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+      - DOCKER_ENV=true
+      - TRANSFORMERS_CACHE=/code/cache
+      - HF_HOME=/code/cache
+      - MODEL_PATH=/code/models/search
+      - BASE_DIR=/code
+    user: "${UID:-1000}:${GID:-1001}"
     depends_on:
       redis:
         condition: service_healthy
@@ -45,74 +48,103 @@ services:
       start_period: 60s
     env_file:
       - .env
+    restart: unless-stopped
 
   redis:
     image: redis:latest
     container_name: redis-standalone
     hostname: redis
     restart: always
+    networks:
+      - aphrc-network
     ports:
       - "6379:6379"
     volumes:
       - redis-data:/data
-    command: redis-server --appendonly yes
+      - ./logs/redis:/var/log/redis:rw  # Added :rw for consistency
+    command: redis-server --appendonly yes --loglevel notice --maxmemory 256mb --maxmemory-policy allkeys-lru
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
-      interval: 10s
-      timeout: 5s
+      test: ["CMD", "redis-cli", "-h", "localhost", "ping"]  # Updated healthcheck
+      interval: 30s
+      timeout: 10s
       retries: 5
-    networks:
-      - aphrc-network
+      start_period: 30s
+    environment:
+      - REDIS_MAXMEMORY=256mb
+      - REDIS_MAXMEMORY_POLICY=allkeys-lru
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+        reservations:
+          memory: 256M
 
   neo4j:
     image: neo4j:5.12.0
     container_name: neo4j
+    user: "${UID:-1000}:${GID:-1001}"
     hostname: neo4j
     restart: always
+    networks:
+      - aphrc-network
     ports:
       - "7474:7474"
       - "7687:7687"
     environment:
       NEO4J_AUTH: "${NEO4J_USER:-neo4j}/${NEO4J_PASSWORD:-password123456789!}"
-      NEO4J_server_memory_pagecache_size: 1G
-      NEO4J_server_memory_heap_initial__size: 1G
-      NEO4J_server_memory_heap_max__size: 1G
+      NEO4J_server_memory_pagecache_size: 512M
+      NEO4J_server_memory_heap_initial__size: 512M
+      NEO4J_server_memory_heap_max__size: 512M
+      NEO4J_dbms_transaction_timeout: 300s
+      NEO4J_ACCEPT_LICENSE_AGREEMENT: "yes"
+      NEO4J_dbms_security_procedures_unrestricted: "apoc.*"
+      NEO4J_dbms_security_procedures_allowlist: "apoc.*"
+      NEO4J_dbms_directories_logs: /logs
     volumes:
       - neo4j-data:/data
+      - ./logs/neo4j:/logs:rw
     healthcheck:
-      test: ["CMD", "neo4j", "status"]
-      interval: 10s
-      timeout: 5s
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:7474"]
+      interval: 30s
+      timeout: 30s
       retries: 5
-      start_period: 30s
-    networks:
-      - aphrc-network
+      start_period: 300s
 
   postgres:
     image: postgres:15-alpine
     container_name: postgres
     restart: always
+    networks:
+      - aphrc-network
     environment:
       POSTGRES_DB: "${POSTGRES_DB:-aphrcdb}"
       POSTGRES_USER: "${POSTGRES_USER:-aphrcuser}"
       POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:-kimu}"
+      PGDATA: /var/lib/postgresql/data/pgdata
     ports:
       - "5432:5432"
     volumes:
       - postgres-data:/var/lib/postgresql/data
+      - ./logs/postgres:/var/log/postgresql:rw  # Added :rw for consistency
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-aphrcuser} -d ${POSTGRES_DB:-aphrcdb}"]
-      interval: 10s
-      timeout: 5s
+      interval: 20s
+      timeout: 10s
       retries: 5
-      start_period: 30s
-    networks:
-      - aphrc-network
+      start_period: 120s
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+        reservations:
+          memory: 256M
 
   pgadmin:
     image: dpage/pgadmin4
     container_name: pgadmin
     restart: always
+    networks:
+      - aphrc-network
     environment:
       PGADMIN_DEFAULT_EMAIL: "${PGADMIN_EMAIL:-admin@admin.com}"
       PGADMIN_DEFAULT_PASSWORD: "${PGADMIN_PASSWORD:-admin}"
@@ -121,16 +153,13 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
-    networks:
-      - aphrc-network
 
 networks:
   aphrc-network:
+    name: aphrc-network  # 
     driver: bridge
 
 volumes:
   postgres-data:
   redis-data:
   neo4j-data:
-  faiss-data:
-    driver: local
