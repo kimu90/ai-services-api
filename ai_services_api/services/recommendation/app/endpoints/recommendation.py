@@ -1,48 +1,59 @@
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Query
 from typing import List, Dict, Any
-
-from ai_services_api.services.recommendation.schemas.expert import ExpertCreate, ExpertResponse, SimilarExpert
-
+from ai_services_api.services.recommendation.schemas.expert import (
+    ExpertCreate,
+    ExpertResponse,
+    SimilarExpert
+)
 from ai_services_api.services.recommendation.services.expert_service import ExpertsService
 import logging
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
 
-@router.post("/experts", response_model=Dict[str, Any])
+@router.post("/", response_model=ExpertResponse)
 async def create_expert(expert: ExpertCreate):
     """
     Add a new expert to the recommendation system and fetch similar experts.
-    Enhanced with comprehensive error handling and logging.
     """
+    logger.info(f"Processing new expert request for ORCID: {expert.orcid}")
+    
     try:
         service = ExpertsService()
         result = await service.add_expert(expert.orcid)
-
+        
         if not result:
             logger.error(f"Expert not found or processing failed for ORCID: {expert.orcid}")
             raise HTTPException(
-                status_code=404, 
-                detail="Expert not found or could not be processed"
+                status_code=404,
+                detail=f"Expert with ORCID {expert.orcid} not found or could not be processed"
             )
-
-        # Log successful expert addition
+        
+        response = ExpertResponse(
+            orcid=expert.orcid,
+            name=result["expert_data"].get("display_name", "Unknown"),
+            domains_fields_subfields=result.get("domains_fields_subfields", []),
+            similar_experts=result.get("recommendations", [])
+        )
+        
         logger.info(f"Successfully processed expert: {expert.orcid}")
-
-        return {
-            "expert_data": result.get('expert_data', {}),
-            "domains_fields_subfields": result.get('domains_fields_subfields', []),
-            "similar_experts": result.get('recommendations', [])
-        }
-
+        return response
+        
+    except HTTPException:
+        raise
     except Exception as e:
-        logger.error(f"Unexpected error processing expert {expert.orcid}: {e}")
-        raise HTTPException(status_code=500, detail="Internal server error")
-
-@router.get("/experts/similar", response_model=List[SimilarExpert])
-async def get_similar_experts(orcid: str, limit: int = 10):
+        logger.error(f"Unexpected error processing expert {expert.orcid}: {str(e)}", exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail=f"Internal server error while processing expert: {str(e)}"
+        )
+@router.get("/", response_model=List[SimilarExpert])
+async def get_similar_experts(
+    orcid: str,
+    limit: int = Query(default=10, ge=1, le=50, description="Maximum number of similar experts to return")
+):
     """
-    Get similar experts for a given ORCID with enhanced error handling.
+    Get similar experts based on shared domains
     """
     try:
         service = ExpertsService()
@@ -50,14 +61,14 @@ async def get_similar_experts(orcid: str, limit: int = 10):
 
         if not similar_experts:
             logger.warning(f"No similar experts found for ORCID: {orcid}")
-            raise HTTPException(
-                status_code=404, 
-                detail="No similar experts found"
-            )
+            return []
 
         logger.info(f"Retrieved {len(similar_experts)} similar experts for {orcid}")
         return similar_experts
 
     except Exception as e:
-        logger.error(f"Error retrieving similar experts for {orcid}: {e}")
-        raise HTTPException(status_code=500, detail="Internal server error")
+        logger.error(f"Error retrieving similar experts for {orcid}: {str(e)}", exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail="Internal server error while retrieving similar experts"
+        )

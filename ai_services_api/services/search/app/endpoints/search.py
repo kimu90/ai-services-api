@@ -1,119 +1,75 @@
-from fastapi import APIRouter, Request, Form, HTTPException
-from fastapi.responses import HTMLResponse, JSONResponse
+import logging
+from fastapi import APIRouter, HTTPException
+from fastapi.responses import JSONResponse
+from pydantic import BaseModel
+from typing import List, Optional
 from ai_services_api.services.search.search_engine import SearchEngine
-from ai_services_api.services.search.experts_manager import ExpertsManager
 
-router = APIRouter()  # Now APIRouter is defined properly
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s: %(message)s'
+)
+logger = logging.getLogger(__name__)
 
-# Global search engine and experts manager
-search_engine = SearchEngine()
-experts_manager = ExpertsManager()
+router = APIRouter()
 
-@router.on_event("startup")
-async def startup_event():
+# Initialize search engine with error handling
+try:
+    logger.info("Initializing SearchEngine...")
+    search_engine = SearchEngine()
+    logger.info("SearchEngine initialized successfully")
+except Exception as e:
+    logger.error(f"Failed to initialize SearchEngine: {e}")
+    raise
+
+class SearchRequest(BaseModel):
+    query: str
+    limit: Optional[int] = 5
+
+class SearchResponse(BaseModel):
+    title: str
+    abstract: str
+    summary: str
+    tags: str
+    authors: str
+    similarity_score: float
+
+@router.get("/")
+async def search(query: str, limit: Optional[int] = 5) -> List[SearchResponse]:
     """
-    Startup event to ensure index is ready
+    GET endpoint for semantic search
     """
     try:
-        # Attempt to read the index (removed FAISS index creation)
-        SearchEngine()
-    except Exception:
-        # No longer attempting to create FAISS index
-        pass
-
-@router.get("/", response_class=HTMLResponse)
-async def read_root(request: Request):
-    """
-    Render the main search page
-    """
-    return templates.TemplateResponse(
-        "index.html",
-        {"request": request, "results": [], "title_results": []}
-    )
-
-@router.post("/search", response_class=HTMLResponse)
-async def semantic_search(request: Request, query: str = Form(...)):
-    """
-    Perform semantic search and return results
-    """
-    # Perform search
-    results = search_engine.search(query)
-
-    # Render template with results
-    return templates.TemplateResponse(
-        "index.html",
-        {
-            "request": request,
-            "results": results,
-            "query": query,
-            "title_results": []
-        }
-    )
-
-@router.post("/search-title", response_class=HTMLResponse)
-async def title_search(request: Request, title: str = Form(...)):
-    """
-    Search for documents by title
-    """
-    # Perform title search
-    title_results = search_engine.search_by_title(title)
-
-    # Render template with results
-    return templates.TemplateResponse(
-        "index.html",
-        {
-            "request": request,
-            "results": [],
-            "title_results": title_results,
-            "title_query": title
-        }
-    )
-
-@router.get("/get-summary")
-async def get_summary(title: str):
-    """
-    API endpoint to get summary by title
-    """
-    # Get summary by title
-    summary = search_engine.get_summary_by_title(title)
-
-    if not summary:
-        raise HTTPException(status_code=404, detail="Document not found")
-
-    return {
-        "title": summary['Title'],
-        "summary": summary['Summary'],
-        "domain": summary['Domain'],
-        "link": summary['Link']
-    }
-
-@router.get("/get-experts")
-async def get_experts(domain: str):
-    """
-    API endpoint to get experts by domain
-    """
-    experts = experts_manager.find_experts_by_domain(domain)
-    return experts
-
-@router.get("/autocomplete")
-async def autocomplete(query: str):
-    """
-    Provide autocomplete suggestions based on the query
-    """
-    # Perform semantic search with a higher k value to get more potential matches
-    suggestions = search_engine.search(query, k=10)
-    
-    # Extract unique titles and summaries
-    unique_suggestions = []
-    seen_titles = set()
-    
-    for result in suggestions:
-        title = result['metadata']['Title']
-        if title not in seen_titles:
-            unique_suggestions.append({
-                'title': title,
-                'summary': result['metadata']['Summary'][:100] + '...'
-            })
-            seen_titles.add(title)
-    
-    return JSONResponse(content=unique_suggestions)
+        logger.info(f"Received search request - query: {query}, limit: {limit}")
+        
+        # Perform search
+        logger.info("Calling search_engine.search()")
+        results = search_engine.search(query, k=limit)
+        logger.info(f"Search completed, found {len(results)} results")
+        
+        # Format results
+        formatted_results = []
+        for result in results:
+            try:
+                metadata = result['metadata']
+                formatted_results.append({
+                    'title': metadata.get('title', ''),
+                    'abstract': metadata.get('abstract', ''),
+                    'summary': metadata.get('summary', ''),
+                    'tags': metadata.get('tags', ''),
+                    'authors': metadata.get('authors', ''),
+                    'similarity_score': result['similarity_score']
+                })
+            except Exception as e:
+                logger.error(f"Error formatting result: {e}")
+                logger.error(f"Problematic result: {result}")
+                continue
+        
+        logger.info(f"Successfully formatted {len(formatted_results)} results")
+        return JSONResponse(content=formatted_results)
+        
+    except Exception as e:
+        logger.error(f"Search error: {str(e)}")
+        logger.exception("Full traceback:")
+        raise HTTPException(status_code=500, detail=f"Search error: {str(e)}")

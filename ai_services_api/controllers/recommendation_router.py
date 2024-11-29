@@ -1,4 +1,3 @@
-# In app/controllers/chatbot_router.py
 
 from fastapi import APIRouter
 from ai_services_api.services.recommendation.app.endpoints import recommendation

@@ -1,85 +1,112 @@
 import faiss
 import pickle
 import os
+import logging
 from pathlib import Path
-from typing import List, Dict, Optional
+from typing import List, Dict
 from sentence_transformers import SentenceTransformer
-from ai_services_api.services.search.config import get_settings
-from ai_services_api.services.search.experts_manager import ExpertsManager
+
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s: %(message)s'
+)
+logger = logging.getLogger(__name__)
 
 class EmbeddingModel:
     def __init__(self):
-        self.model = SentenceTransformer('sentence-transformers/all-MiniLM-L6-v2')
-        
+        try:
+            logger.info("Initializing embedding model...")
+            self.model = SentenceTransformer('sentence-transformers/all-MiniLM-L6-v2')
+            logger.info("Embedding model initialized successfully")
+        except Exception as e:
+            logger.error(f"Error initializing embedding model: {e}")
+            raise
+
     def get_embedding(self, text: str) -> List[float]:
-        embeddings = self.model.encode([text], convert_to_numpy=True)
-        return embeddings
+        try:
+            embeddings = self.model.encode([text], convert_to_numpy=True)
+            return embeddings
+        except Exception as e:
+            logger.error(f"Error generating embedding: {e}")
+            raise
 
 class SearchEngine:
-    def __init__(self, embedding_model_path=None):
-        self.embedding_model = EmbeddingModel()
-
-        current_dir = Path(os.path.dirname(os.path.abspath(__file__)))
-        models_dir = current_dir.parent / 'models'
-        self.index_path = models_dir / 'faiss_index.idx'
-        self.mapping_path = models_dir / 'chunk_mapping.pkl'
-
-        if not os.path.isfile(self.index_path):
-            raise FileNotFoundError(f"FAISS index not found at {self.index_path}")
-        
-        self.index = faiss.read_index(str(self.index_path))
-
-        if not os.path.isfile(self.mapping_path):
-            raise FileNotFoundError(f"Chunk mapping not found at {self.mapping_path}")
+    def __init__(self):
+        try:
+            logger.info("Initializing SearchEngine...")
+            self.embedding_model = EmbeddingModel()
             
-        with open(self.mapping_path, 'rb') as f:
-            self.chunk_mapping = pickle.load(f)
+            current_dir = Path(os.path.dirname(os.path.abspath(__file__)))
+            models_dir = current_dir.parent / 'models'
+            self.index_path = models_dir / 'faiss_index.idx'
+            self.mapping_path = models_dir / 'chunk_mapping.pkl'
+            
+            if not os.path.isfile(self.index_path):
+                raise FileNotFoundError(f"FAISS index not found at {self.index_path}")
+            
+            if not os.path.isfile(self.mapping_path):
+                raise FileNotFoundError(f"Chunk mapping not found at {self.mapping_path}")
+            
+            logger.info("Loading FAISS index...")
+            self.index = faiss.read_index(str(self.index_path))
+            
+            logger.info("Loading chunk mapping...")
+            with open(self.mapping_path, 'rb') as f:
+                self.chunk_mapping = pickle.load(f)
+                
+            logger.info(f"SearchEngine initialized with {len(self.chunk_mapping)} documents")
+            
+        except Exception as e:
+            logger.error(f"Error initializing SearchEngine: {e}")
+            raise
 
-        self.experts_manager = ExpertsManager()
-
-    # Rest of the code remains unchanged
     def search(self, query: str, k: int = 5) -> List[Dict]:
         """
         Perform semantic search on the indexed documents.
-        """
-        query_vector = self.embedding_model.get_embedding(query)
-        D, I = self.index.search(query_vector, k)
-
-        results = []
-        for idx, score in zip(I[0], D[0]):
-            result = {
-                'metadata': self.chunk_mapping[idx],
-                'similarity_score': float(score)
-            }
+        
+        Args:
+            query (str): The search query
+            k (int): Number of results to return
             
-            domain = result['metadata'].get('Domain', ' ')
-            result['experts'] = self.experts_manager.find_experts_by_domain(domain)[:3]
+        Returns:
+            List[Dict]: List of search results with metadata and similarity scores
+        """
+        try:
+            logger.info(f"Searching for: {query}")
             
-            results.append(result)
-
-        return results
-
-    def get_summary_by_title(self, title: str) -> Optional[Dict]:
-        """
-        Retrieve document details by exact title match.
-        """
-        for idx, doc in self.chunk_mapping.items():
-            if doc['Title'].lower() == title.lower():
-                return doc
-        return None
-
-    def search_by_title(self, title_query: str, k: int = 5) -> List[Dict]:
-        """
-        Search for documents with titles similar to the query.
-        """
-        matching_docs = []
-
-        for idx, doc in self.chunk_mapping.items():
-            if title_query.lower() in doc['Title'].lower():
-                matching_docs.append({
-                    'metadata': doc,
-                    'similarity': 1.0
-                })
-
-        matching_docs.sort(key=lambda x: x['similarity'], reverse=True)
-        return matching_docs[:k]
+            # Generate query embedding
+            query_vector = self.embedding_model.get_embedding(query)
+            
+            # Perform search
+            distances, indices = self.index.search(query_vector, k)
+            
+            # Format results
+            results = []
+            for idx, (distance, doc_idx) in enumerate(zip(distances[0], indices[0])):
+                # Skip invalid indices
+                if doc_idx < 0 or doc_idx >= len(self.chunk_mapping):
+                    logger.warning(f"Invalid index {doc_idx} found in search results")
+                    continue
+                    
+                try:
+                    # Convert distance to similarity score (optional)
+                    # FAISS returns L2 distance, smaller is better
+                    # Converting to a similarity score between 0 and 1
+                    max_distance = 100  # You may need to adjust this based on your embeddings
+                    similarity = max(0, 1 - (distance / max_distance))
+                    
+                    result = {
+                        'metadata': self.chunk_mapping[doc_idx],
+                        'similarity_score': float(similarity)
+                    }
+                    results.append(result)
+                except Exception as e:
+                    logger.error(f"Error processing result {idx}: {e}")
+                    continue
+            
+            logger.info(f"Found {len(results)} valid results")
+            return results
+            
+        except Exception as e:
+            logger.error(f"Error during search: {e}")
+            raise

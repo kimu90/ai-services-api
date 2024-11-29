@@ -1,70 +1,176 @@
-import httpx
+import aiohttp
+import logging
+import os
+from typing import Dict, List, Tuple, Optional, Any
 from ai_services_api.services.recommendation.config import get_settings
-
-settings = get_settings()
 
 class OpenAlexService:
     def __init__(self):
-        self.base_url = settings.OPENALEX_API_URL
+        settings = get_settings()
+        self.base_url = settings.OPENALEX_API_URL or 'https://api.openalex.org'
+        self.logger = logging.getLogger(__name__)
 
-    async def _fetch_data(self, endpoint: str, params: dict = None):
-        """Helper method to fetch data from OpenAlex API."""
+    async def _fetch_data(self, endpoint: str, params: dict = None) -> Optional[Dict]:
+        """
+        Helper method to fetch data from OpenAlex API
+        Args:
+            endpoint (str): API endpoint
+            params (dict, optional): Query parameters
+        Returns:
+            Optional[Dict]: Response data if successful
+        """
+        url = f"{self.base_url}/{endpoint}"
+        self.logger.debug(f"Fetching data from {url} with params: {params}")
+
         try:
-            async with httpx.AsyncClient() as client:
-                response = await client.get(f"{self.base_url}/{endpoint}", params=params, timeout=30)
-                response.raise_for_status()  # Raises HTTPError for bad responses
-                return response.json()
-        except httpx.HTTPStatusError as e:
-            print(f"HTTP error occurred: {e.response.status_code} - {e.response.text}")
-        except httpx.RequestError as e:
-            print(f"Request error occurred: {e}")
-        return None
+            async with aiohttp.ClientSession() as session:
+                async with session.get(url, params=params) as response:
+                    if response.status == 200:
+                        data = await response.json()
+                        return data
+                    else:
+                        self.logger.error(f"Failed to fetch data. Status: {response.status}")
+                        return None
+        except Exception as e:
+            self.logger.error(f"Error in _fetch_data: {e}")
+            return None
 
-    async def get_expert_data(self, orcid: str):
-        """Fetch expert data from OpenAlex API."""
-        data = await self._fetch_data('authors', params={'filter': f"orcid:{orcid}"})
+    async def get_expert_data(self, orcid: str) -> Optional[Dict[str, Any]]:
+        """
+        Fetch expert data from OpenAlex using ORCID
+        Args:
+            orcid (str): The ORCID identifier
+        Returns:
+            Optional[Dict[str, Any]]: Expert data if found
+        """
+        self.logger.info(f"Fetching expert data for ORCID: {orcid}")
+        
+        # Format ORCID for OpenAlex API
+        if not orcid.startswith('https://orcid.org/'):
+            formatted_orcid = f"https://orcid.org/{orcid}"
+        else:
+            formatted_orcid = orcid
+
+        params = {"filter": f"orcid:{formatted_orcid}"}
+        data = await self._fetch_data('authors', params=params)
+
         if data and 'results' in data:
-            return data['results'][0] if data['results'] else None
+            results = data['results']
+            if results:
+                expert_data = results[0]
+                self.logger.info(f"Successfully fetched data for {orcid}")
+                self.logger.debug(f"Expert data: {expert_data}")
+                return expert_data
+
+        self.logger.warning(f"No expert found for ORCID: {orcid}")
         return None
 
-    async def get_expert_domains(self, orcid: str):
-        """Fetch expert's domains, fields, and subfields from their works using topics."""
+    async def get_expert_domains(self, orcid: str) -> List[Dict[str, str]]:
+        """
+        Fetch expert's domains, fields, and subfields from their works
+        Args:
+            orcid (str): Expert's ORCID
+        Returns:
+            List[Dict[str, str]]: List of domain-field-subfield mappings
+        """
+        self.logger.info(f"Fetching domains for ORCID: {orcid}")
+
+        # Get expert data first
         expert_data = await self.get_expert_data(orcid)
         if not expert_data:
+            self.logger.warning(f"No expert data found for ORCID: {orcid}")
             return []
 
+        # Extract OpenAlex ID
         openalex_id = expert_data['id']
-        domains_fields_subfields = []
+        self.logger.debug(f"Found OpenAlex ID: {openalex_id}")
 
-        # Get the author's works
-        works_data = await self._fetch_data('works', params={'filter': f"authorships.author.id:{openalex_id}", 'per-page': 50})
+        # Get the expert's works
+        params = {
+            'filter': f"author.id:{openalex_id}",
+            'per-page': 50
+        }
+        works_data = await self._fetch_data('works', params=params)
+
         if not works_data or 'results' not in works_data:
+            self.logger.warning(f"No works found for {orcid}")
             return []
 
-        # Extract unique domains, fields, and subfields from topics
+        # Process domains, fields, and subfields
+        domains_fields_subfields = []
+        unique_combinations = set()
+
         for work in works_data['results']:
-            for topic in work.get('topics', []):  # Now using 'topics' instead of 'concepts'
-                domain_name = topic.get('domain', {}).get('display_name', 'Unknown Domain')
-                field_name = topic.get('field', {}).get('display_name', 'Unknown Field')
-                subfield_name = topic.get('subfield', {}).get('display_name', 'Unknown Subfield')
+            for topic in work.get('topics', []):
+                domain = topic.get('domain', {}).get('display_name', 'Unknown Domain')
+                field = topic.get('field', {}).get('display_name', 'Unknown Field')
+                subfield = topic.get('subfield', {}).get('display_name', 'Unknown Subfield')
+
+                # Create unique combination key
+                combo = (domain, field, subfield)
                 
-                # Append each topic to the list
-                domains_fields_subfields.append({
-                    'domain': domain_name,
-                    'field': field_name,
-                    'subfield': subfield_name
-                })
+                if combo not in unique_combinations:
+                    unique_combinations.add(combo)
+                    domains_fields_subfields.append({
+                        'domain': domain,
+                        'field': field,
+                        'subfield': subfield
+                    })
 
-        # Remove duplicates based on domain, field, and subfield combination
-        unique_items = {(item['domain'], item['field'], item['subfield']): item for item in domains_fields_subfields}
-        return list(unique_items.values())
+        self.logger.info(f"Found {len(domains_fields_subfields)} unique topic combinations for {orcid}")
+        return domains_fields_subfields
 
-    async def get_expert_works(self, orcid: str):
-        """Fetch expert's works."""
+    async def get_expert_works(self, orcid: str) -> Optional[Dict]:
+        """
+        Fetch all works by an expert
+        Args:
+            orcid (str): Expert's ORCID
+        Returns:
+            Optional[Dict]: Works data if successful
+        """
+        self.logger.info(f"Fetching works for ORCID: {orcid}")
+
         expert_data = await self.get_expert_data(orcid)
         if not expert_data:
+            self.logger.warning(f"No expert data found for ORCID: {orcid}")
             return None
 
         openalex_id = expert_data['id']
-        works_data = await self._fetch_data('works', params={'filter': f"authorships.author.id:{openalex_id}"})
-        return works_data if works_data else None
+        params = {
+            'filter': f"author.id:{openalex_id}",
+            'per-page': 100  # Increased to get more works
+        }
+
+        works_data = await self._fetch_data('works', params=params)
+        if works_data:
+            work_count = len(works_data.get('results', []))
+            self.logger.info(f"Retrieved {work_count} works for {orcid}")
+            return works_data
+
+        self.logger.warning(f"No works found for {orcid}")
+        return None
+
+    async def get_works_by_topic(self, topic: str, limit: int = 50) -> List[Dict]:
+        """
+        Fetch works related to a specific topic
+        Args:
+            topic (str): Topic to search for
+            limit (int): Maximum number of works to return
+        Returns:
+            List[Dict]: List of works
+        """
+        self.logger.info(f"Fetching works for topic: {topic}")
+
+        params = {
+            'filter': f"topics.id:{topic}",
+            'per-page': min(limit, 100)
+        }
+
+        data = await self._fetch_data('works', params=params)
+        if data and 'results' in data:
+            works = data['results']
+            self.logger.info(f"Found {len(works)} works for topic {topic}")
+            return works
+
+        self.logger.warning(f"No works found for topic {topic}")
+        return []
