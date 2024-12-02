@@ -17,7 +17,7 @@
             <div class="max-w-3xl mx-auto">
                 <div class="bg-gray-800 rounded-lg shadow-md p-6 border border-gray-700 mb-6">
                     <form id="search-form" class="space-y-4">
-                        <div>
+                        <div class="relative">
                             <label for="search-input" class="block mb-2 font-medium">Enter your query:</label>
                             <input 
                                 type="text" 
@@ -25,22 +25,20 @@
                                 name="query" 
                                 class="bg-gray-700 text-gray-100 rounded-md px-4 py-2 w-full"
                                 placeholder="Enter your semantic search query..."
+                                autocomplete="off"
                                 required
                             >
+                            <div id="predictions-dropdown" class="hidden absolute w-full bg-gray-700 mt-1 rounded-md shadow-lg z-50 max-h-60 overflow-y-auto">
+                            </div>
                         </div>
                         <button type="submit" class="bg-green-500 hover:bg-green-600 text-white font-medium px-4 py-2 rounded-md w-full">Search</button>
                     </form>
                 </div>
 
-                <!-- Results section -->
                 <div id="results-container" class="space-y-4"></div>
-                
-                <!-- Loading indicator -->
                 <div id="loading" class="hidden">
                     <p class="text-center text-gray-400">Searching...</p>
                 </div>
-                
-                <!-- Error message -->
                 <div id="error" class="hidden bg-red-900 text-white p-4 rounded-md mt-4"></div>
             </div>
         </main>
@@ -51,11 +49,124 @@
     </div>
 
     <script>
+        // Define API endpoints based on your actual endpoints
+        const searchEndpoint = '/search/search';
+        const predictEndpoint = '/search/search/predict';
+        const popularEndpoint = '/search/search/popular';
+        const recentEndpoint = '/search/search/recent';
+
         const searchForm = document.getElementById('search-form');
         const searchInput = document.getElementById('search-input');
+        const predictionsDropdown = document.getElementById('predictions-dropdown');
         const resultsContainer = document.getElementById('results-container');
         const loadingElement = document.getElementById('loading');
         const errorElement = document.getElementById('error');
+
+        function debounce(func, wait) {
+            let timeout;
+            return function executedFunction(...args) {
+                const later = () => {
+                    clearTimeout(timeout);
+                    func(...args);
+                };
+                clearTimeout(timeout);
+                timeout = setTimeout(later, wait);
+            };
+        }
+
+        async function fetchPredictions(partial) {
+            if (partial.length < 2) {
+                predictionsDropdown.classList.add('hidden');
+                return;
+            }
+
+            try {
+                const url = `${predictEndpoint}?partial_query=${encodeURIComponent(partial)}&limit=5`;
+                console.log('Fetching predictions from:', url);
+                
+                const response = await fetch(url);
+                if (!response.ok) {
+                    console.error('Prediction response error:', response.status, response.statusText);
+                    throw new Error('Failed to fetch predictions');
+                }
+                
+                const predictions = await response.json();
+                console.log('Received predictions:', predictions);
+                displayPredictions(predictions);
+            } catch (err) {
+                console.error('Prediction error:', err);
+            }
+        }
+
+        function displayPredictions(predictions) {
+            if (!predictions || !predictions.length) {
+                predictionsDropdown.classList.add('hidden');
+                return;
+            }
+
+            predictionsDropdown.innerHTML = predictions.map(pred => `
+                <div class="prediction-item px-4 py-2 hover:bg-gray-600 cursor-pointer text-gray-100">
+                    ${pred}
+                </div>
+            `).join('');
+
+            predictionsDropdown.classList.remove('hidden');
+
+            document.querySelectorAll('.prediction-item').forEach(item => {
+                item.addEventListener('click', () => {
+                    searchInput.value = item.textContent.trim();
+                    predictionsDropdown.classList.add('hidden');
+                    searchForm.dispatchEvent(new Event('submit'));
+                });
+            });
+        }
+
+        searchInput.addEventListener('input', debounce(async (e) => {
+            const query = e.target.value.trim();
+            await fetchPredictions(query);
+        }, 300));
+
+        document.addEventListener('click', (e) => {
+            if (!searchInput.contains(e.target) && !predictionsDropdown.contains(e.target)) {
+                predictionsDropdown.classList.add('hidden');
+            }
+        });
+
+        searchInput.addEventListener('keydown', (e) => {
+            const items = predictionsDropdown.querySelectorAll('.prediction-item');
+            const activeItem = predictionsDropdown.querySelector('.bg-gray-600');
+            let index = Array.from(items).indexOf(activeItem);
+
+            switch (e.key) {
+                case 'ArrowDown':
+                    e.preventDefault();
+                    if (index < items.length - 1) index++;
+                    break;
+                case 'ArrowUp':
+                    e.preventDefault();
+                    if (index > 0) index--;
+                    break;
+                case 'Enter':
+                    if (activeItem) {
+                        e.preventDefault();
+                        searchInput.value = activeItem.textContent.trim();
+                        predictionsDropdown.classList.add('hidden');
+                        searchForm.dispatchEvent(new Event('submit'));
+                    }
+                    return;
+                case 'Escape':
+                    predictionsDropdown.classList.add('hidden');
+                    return;
+                default:
+                    return;
+            }
+
+            items.forEach(item => item.classList.remove('bg-gray-600'));
+            if (items[index]) {
+                items[index].classList.add('bg-gray-600');
+                items[index].scrollIntoView({ block: 'nearest' });
+            }
+        });
 
         searchForm.addEventListener('submit', async function(e) {
             e.preventDefault();
@@ -63,17 +174,23 @@
             
             if (!query) return;
 
-            // Show loading, hide error
+            predictionsDropdown.classList.add('hidden');
             loadingElement.classList.remove('hidden');
             errorElement.classList.add('hidden');
             resultsContainer.innerHTML = '';
 
             try {
-                // Updated endpoint URL
-                const response = await fetch(`/search/search/?query=${encodeURIComponent(query)}&limit=5`);
-                if (!response.ok) throw new Error('Search failed');
+                const url = `${searchEndpoint}?query=${encodeURIComponent(query)}&limit=5`;
+                console.log('Searching with URL:', url);
+                
+                const response = await fetch(url);
+                if (!response.ok) {
+                    console.error('Search response error:', response.status, response.statusText);
+                    throw new Error('Search failed');
+                }
                 
                 const results = await response.json();
+                console.log('Search results:', results);
                 displayResults(results);
             } catch (err) {
                 console.error('Search error:', err);
@@ -87,7 +204,7 @@
         function displayResults(results) {
             resultsContainer.innerHTML = '';
             
-            if (results.length === 0) {
+            if (!results || results.length === 0) {
                 resultsContainer.innerHTML = `
                     <div class="bg-gray-800 rounded-lg p-6 text-center text-gray-400">
                         No results found
@@ -98,10 +215,10 @@
 
             results.forEach(result => {
                 const resultElement = document.createElement('div');
-                resultElement.className = 'bg-gray-800 rounded-lg p-6 border border-gray-700';
+                resultElement.className = 'bg-gray-800 rounded-lg p-6 border border-gray-700 mb-4';
                 
                 resultElement.innerHTML = `
-                    <h3 class="text-xl font-semibold mb-2">${result.title}</h3>
+                    <h3 class="text-xl font-semibold mb-2">${result.title || 'Untitled'}</h3>
                     
                     ${result.authors ? `
                         <p class="text-gray-400 mb-2">

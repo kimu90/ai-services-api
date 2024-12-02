@@ -88,6 +88,7 @@ def create_tables():
     cur = conn.cursor()
 
     sql_statements = [
+        # Core publication tables
         """
         CREATE TABLE IF NOT EXISTS publications (
             doi VARCHAR(255) PRIMARY KEY,
@@ -134,6 +135,39 @@ def create_tables():
             fields TEXT[],
             subfields TEXT[]
         );
+        """,
+        
+        # Search history tables
+        """
+        CREATE TABLE IF NOT EXISTS query_history (
+            query_id SERIAL PRIMARY KEY,
+            query TEXT NOT NULL,
+            timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            result_count INT,
+            search_type VARCHAR(50)
+        );
+        """,
+        """
+        CREATE TABLE IF NOT EXISTS term_frequencies (
+            term_id SERIAL PRIMARY KEY,
+            term TEXT NOT NULL UNIQUE,
+            frequency INTEGER DEFAULT 1,
+            last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+        """,
+        
+        # Create indices for search tables
+        """
+        CREATE INDEX IF NOT EXISTS idx_query_history_query 
+        ON query_history (query text_pattern_ops);
+        """,
+        """
+        CREATE INDEX IF NOT EXISTS idx_query_history_timestamp 
+        ON query_history (timestamp DESC);
+        """,
+        """
+        CREATE INDEX IF NOT EXISTS idx_term_frequencies_term 
+        ON term_frequencies (term);
         """
     ]
 
@@ -159,6 +193,8 @@ def drop_all_tables():
 
     try:
         tables = [
+            'term_frequencies',
+            'query_history',
             'experts', 
             'author_publication', 
             'authors', 
