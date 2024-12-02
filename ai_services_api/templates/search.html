@@ -14,10 +14,10 @@
         </header>
 
         <main>
-            <div class="max-w-md mx-auto">
-                <div class="bg-gray-800 rounded-lg shadow-md p-6 border border-gray-700">
-                    <form action="/search" method="post" class="space-y-4">
-                        <div>
+            <div class="max-w-3xl mx-auto">
+                <div class="bg-gray-800 rounded-lg shadow-md p-6 border border-gray-700 mb-6">
+                    <form id="search-form" class="space-y-4">
+                        <div class="relative">
                             <label for="search-input" class="block mb-2 font-medium">Enter your query:</label>
                             <input 
                                 type="text" 
@@ -28,11 +28,18 @@
                                 autocomplete="off"
                                 required
                             >
+                            <div id="predictions-dropdown" class="hidden absolute w-full bg-gray-700 mt-1 rounded-md shadow-lg z-50 max-h-60 overflow-y-auto">
+                            </div>
                         </div>
                         <button type="submit" class="bg-green-500 hover:bg-green-600 text-white font-medium px-4 py-2 rounded-md w-full">Search</button>
                     </form>
-                    <div id="autocomplete-list" class="mt-4 bg-gray-700 rounded-md shadow-lg"></div>
                 </div>
+
+                <div id="results-container" class="space-y-4"></div>
+                <div id="loading" class="hidden">
+                    <p class="text-center text-gray-400">Searching...</p>
+                </div>
+                <div id="error" class="hidden bg-red-900 text-white p-4 rounded-md mt-4"></div>
             </div>
         </main>
 
@@ -42,79 +49,211 @@
     </div>
 
     <script>
-        const searchInput = document.getElementById('search-input');
-        const autocompleteList = document.getElementById('autocomplete-list');
-        let currentIndex = -1;
+        // Define API endpoints based on your actual endpoints
+        const searchEndpoint = '/search/search';
+        const predictEndpoint = '/search/search/predict';
+        const popularEndpoint = '/search/search/popular';
+        const recentEndpoint = '/search/search/recent';
 
-        searchInput.addEventListener('input', function() {
-            const query = this.value.trim();
-            
-            if (query.length < 2) {
-                autocompleteList.innerHTML = '';
+        const searchForm = document.getElementById('search-form');
+        const searchInput = document.getElementById('search-input');
+        const predictionsDropdown = document.getElementById('predictions-dropdown');
+        const resultsContainer = document.getElementById('results-container');
+        const loadingElement = document.getElementById('loading');
+        const errorElement = document.getElementById('error');
+
+        function debounce(func, wait) {
+            let timeout;
+            return function executedFunction(...args) {
+                const later = () => {
+                    clearTimeout(timeout);
+                    func(...args);
+                };
+                clearTimeout(timeout);
+                timeout = setTimeout(later, wait);
+            };
+        }
+
+        async function fetchPredictions(partial) {
+            if (partial.length < 2) {
+                predictionsDropdown.classList.add('hidden');
                 return;
             }
 
-            fetch(`/autocomplete?query=${encodeURIComponent(query)}`)
-                .then(response => response.json())
-                .then(suggestions => {
-                    autocompleteList.innerHTML = '';
-                    if (suggestions.length === 0) {
-                        return;
-                    }
-
-                    suggestions.forEach((suggestion, index) => {
-                        const div = document.createElement('div');
-                        div.classList.add('autocomplete-item', 'p-2', 'hover:bg-gray-600', 'cursor-pointer', 'rounded-md');
-                        div.innerHTML = `<strong>${suggestion.title}</strong><p class="text-sm text-gray-300">${suggestion.summary}</p>`;
-                        
-                        div.addEventListener('click', () => {
-                            searchInput.value = suggestion.title;
-                            autocompleteList.innerHTML = '';
-                        });
-
-                        div.addEventListener('mouseenter', () => {
-                            setSelectedItem(index);
-                        });
-
-                        autocompleteList.appendChild(div);
-                    });
-                })
-                .catch(error => {
-                    console.error('Autocomplete error:', error);
-                });
-        });
-
-        searchInput.addEventListener('keydown', function(event) {
-            const items = autocompleteList.getElementsByClassName('autocomplete-item');
-            if (event.key === 'ArrowDown') {
-                currentIndex = (currentIndex + 1) % items.length;
-                setSelectedItem(currentIndex);
-                event.preventDefault();
-            } else if (event.key === 'ArrowUp') {
-                currentIndex = (currentIndex - 1 + items.length) % items.length;
-                setSelectedItem(currentIndex);
-                event.preventDefault();
-            } else if (event.key === 'Enter') {
-                if (currentIndex >= 0 && currentIndex < items.length) {
-                    searchInput.value = items[currentIndex].querySelector('strong').textContent.trim();
-                    autocompleteList.innerHTML = '';
-                    event.preventDefault();
+            try {
+                const url = `${predictEndpoint}?partial_query=${encodeURIComponent(partial)}&limit=5`;
+                console.log('Fetching predictions from:', url);
+                
+                const response = await fetch(url);
+                if (!response.ok) {
+                    console.error('Prediction response error:', response.status, response.statusText);
+                    throw new Error('Failed to fetch predictions');
                 }
+                
+                const predictions = await response.json();
+                console.log('Received predictions:', predictions);
+                displayPredictions(predictions);
+            } catch (err) {
+                console.error('Prediction error:', err);
             }
-        });
+        }
 
-        function setSelectedItem(index) {
-            const items = autocompleteList.getElementsByClassName('autocomplete-item');
-            Array.from(items).forEach((item, i) => {
-                item.classList.toggle('bg-gray-600', i === index);
+        function displayPredictions(predictions) {
+            if (!predictions || !predictions.length) {
+                predictionsDropdown.classList.add('hidden');
+                return;
+            }
+
+            predictionsDropdown.innerHTML = predictions.map(pred => `
+                <div class="prediction-item px-4 py-2 hover:bg-gray-600 cursor-pointer text-gray-100">
+                    ${pred}
+                </div>
+            `).join('');
+
+            predictionsDropdown.classList.remove('hidden');
+
+            document.querySelectorAll('.prediction-item').forEach(item => {
+                item.addEventListener('click', () => {
+                    searchInput.value = item.textContent.trim();
+                    predictionsDropdown.classList.add('hidden');
+                    searchForm.dispatchEvent(new Event('submit'));
+                });
             });
         }
 
-        document.addEventListener('click', function(event) {
-            if (!autocompleteList.contains(event.target) && event.target !== searchInput) {
-                autocompleteList.innerHTML = '';
+        searchInput.addEventListener('input', debounce(async (e) => {
+            const query = e.target.value.trim();
+            await fetchPredictions(query);
+        }, 300));
+
+        document.addEventListener('click', (e) => {
+            if (!searchInput.contains(e.target) && !predictionsDropdown.contains(e.target)) {
+                predictionsDropdown.classList.add('hidden');
             }
         });
+
+        searchInput.addEventListener('keydown', (e) => {
+            const items = predictionsDropdown.querySelectorAll('.prediction-item');
+            const activeItem = predictionsDropdown.querySelector('.bg-gray-600');
+            let index = Array.from(items).indexOf(activeItem);
+
+            switch (e.key) {
+                case 'ArrowDown':
+                    e.preventDefault();
+                    if (index < items.length - 1) index++;
+                    break;
+                case 'ArrowUp':
+                    e.preventDefault();
+                    if (index > 0) index--;
+                    break;
+                case 'Enter':
+                    if (activeItem) {
+                        e.preventDefault();
+                        searchInput.value = activeItem.textContent.trim();
+                        predictionsDropdown.classList.add('hidden');
+                        searchForm.dispatchEvent(new Event('submit'));
+                    }
+                    return;
+                case 'Escape':
+                    predictionsDropdown.classList.add('hidden');
+                    return;
+                default:
+                    return;
+            }
+
+            items.forEach(item => item.classList.remove('bg-gray-600'));
+            if (items[index]) {
+                items[index].classList.add('bg-gray-600');
+                items[index].scrollIntoView({ block: 'nearest' });
+            }
+        });
+
+        searchForm.addEventListener('submit', async function(e) {
+            e.preventDefault();
+            const query = searchInput.value.trim();
+            
+            if (!query) return;
+
+            predictionsDropdown.classList.add('hidden');
+            loadingElement.classList.remove('hidden');
+            errorElement.classList.add('hidden');
+            resultsContainer.innerHTML = '';
+
+            try {
+                const url = `${searchEndpoint}?query=${encodeURIComponent(query)}&limit=5`;
+                console.log('Searching with URL:', url);
+                
+                const response = await fetch(url);
+                if (!response.ok) {
+                    console.error('Search response error:', response.status, response.statusText);
+                    throw new Error('Search failed');
+                }
+                
+                const results = await response.json();
+                console.log('Search results:', results);
+                displayResults(results);
+            } catch (err) {
+                console.error('Search error:', err);
+                errorElement.textContent = 'Failed to perform search. Please try again.';
+                errorElement.classList.remove('hidden');
+            } finally {
+                loadingElement.classList.add('hidden');
+            }
+        });
+
+        function displayResults(results) {
+            resultsContainer.innerHTML = '';
+            
+            if (!results || results.length === 0) {
+                resultsContainer.innerHTML = `
+                    <div class="bg-gray-800 rounded-lg p-6 text-center text-gray-400">
+                        No results found
+                    </div>
+                `;
+                return;
+            }
+
+            results.forEach(result => {
+                const resultElement = document.createElement('div');
+                resultElement.className = 'bg-gray-800 rounded-lg p-6 border border-gray-700 mb-4';
+                
+                resultElement.innerHTML = `
+                    <h3 class="text-xl font-semibold mb-2">${result.title || 'Untitled'}</h3>
+                    
+                    ${result.authors ? `
+                        <p class="text-gray-400 mb-2">
+                            <span class="font-medium">Authors:</span> ${result.authors}
+                        </p>
+                    ` : ''}
+                    
+                    ${result.tags ? `
+                        <p class="text-gray-400 mb-2">
+                            <span class="font-medium">Tags:</span> ${result.tags}
+                        </p>
+                    ` : ''}
+                    
+                    ${result.abstract ? `
+                        <div class="mb-4">
+                            <h4 class="font-medium text-gray-300">Abstract:</h4>
+                            <p class="text-gray-400">${result.abstract}</p>
+                        </div>
+                    ` : ''}
+                    
+                    ${result.summary ? `
+                        <div class="mb-4">
+                            <h4 class="font-medium text-gray-300">Summary:</h4>
+                            <p class="text-gray-400">${result.summary}</p>
+                        </div>
+                    ` : ''}
+                    
+                    <div class="text-right text-sm text-gray-400">
+                        Similarity Score: ${(result.similarity_score * 100).toFixed(1)}%
+                    </div>
+                `;
+                
+                resultsContainer.appendChild(resultElement);
+            });
+        }
     </script>
 </body>
 </html>

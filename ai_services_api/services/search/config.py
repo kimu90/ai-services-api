@@ -22,7 +22,7 @@ class Settings(BaseSettings):
     # Redis settings
     REDIS_HOST: str = "redis"
     REDIS_PORT: str = "6379"
-    REDIS_DB: str = "0"
+    REDIS_DB: str = "1"
     REDIS_URL: str = "redis://redis:6379"
     REDIS_GRAPH_URL: str = "redis://redis-graph:6380"
     REDIS_GRAPH_NAME: str = "reco_graph"

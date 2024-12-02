@@ -25,8 +25,8 @@
                                 id="orcid" 
                                 name="orcid" 
                                 class="bg-gray-700 text-gray-100 rounded-md px-4 py-2 w-full" 
-                                placeholder="e.g., 0000-0002-1825-0097"
-                                pattern="^\d{4}-\d{4}-\d{4}-\d{3}[\dX]$"
+                                placeholder="0000-0002-1825-0097"
+                                pattern="\d{4}-\d{4}-\d{4}-\d{3}[\dX]"
                                 title="Please enter a valid ORCID (e.g., 0000-0002-1825-0097)"
                                 required
                             >
@@ -55,11 +55,12 @@
 
         recommendationForm.addEventListener('submit', async (event) => {
             event.preventDefault();
-            const orcid = event.target.orcid.value.trim();
+            const rawOrcid = event.target.orcid.value.trim();
+            const fullOrcid = `https://orcid.org/${rawOrcid}`;
 
             try {
                 showLoading();
-                const response = await fetch(`http://localhost:8000/recommendation/recommendation/?orcid=${orcid}`, {
+                const response = await fetch(`http://localhost:8000/recommendation/recommendation/?orcid=${encodeURIComponent(fullOrcid)}`, {
                     method: 'GET',
                     headers: {
                         'Content-Type': 'application/json',
@@ -92,33 +93,27 @@
                 const card = document.createElement('div');
                 card.classList.add('bg-gray-800', 'rounded-lg', 'shadow-md', 'hover:shadow-xl', 'transition-shadow', 'p-6', 'border', 'border-gray-700');
 
-                // Expert Name
                 const name = document.createElement('h3');
                 name.classList.add('text-xl', 'font-semibold', 'mb-2');
                 name.textContent = expert.name;
 
-                // Expert ORCID
                 const orcid = document.createElement('div');
                 orcid.classList.add('text-gray-400', 'mb-2');
-                orcid.textContent = `ORCID: ${expert.orcid}`;
+                orcid.textContent = `ORCID: ${expert.orcid.replace('https://orcid.org/', '')}`;
 
-                // Shared Field
-                const sharedField = document.createElement('div');
-                sharedField.classList.add('text-gray-300', 'mb-2');
-                sharedField.textContent = `Shared Field: ${expert.shared_field || 'N/A'}`;
+                const domains = document.createElement('div');
+                domains.classList.add('text-gray-300', 'mb-2');
+                domains.textContent = `Shared Domains: ${expert.shared_domains.join(', ')}`;
 
-                // Shared Subfield
-                const sharedSubfield = document.createElement('div');
-                sharedSubfield.classList.add('text-gray-300', 'mb-4');
-                sharedSubfield.textContent = `Shared Subfield: ${expert.shared_subfield || 'N/A'}`;
+                const score = document.createElement('div');
+                score.classList.add('text-green-400', 'font-medium');
+                score.textContent = `Similarity Score: ${expert.similarity_score.toFixed(1)}`;
 
-                // Append all the elements to the card
                 card.appendChild(name);
                 card.appendChild(orcid);
-                card.appendChild(sharedField);
-                card.appendChild(sharedSubfield);
+                card.appendChild(domains);
+                card.appendChild(score);
 
-                // Add the card to the recommendations container
                 recommendationsContainer.appendChild(card);
             });
         }

@@ -4,60 +4,23 @@ from dotenv import load_dotenv
 import google.generativeai as genai
 from typing import Optional, Dict, Any
 import psycopg2
-from psycopg2 import sql
-from urllib.parse import urlparse
 import logging
+import csv
+import asyncio
+import aiohttp
 
-# Set up logging configuration
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
+from database_setup import get_db_connection
 
 # Load environment variables
 load_dotenv()
 
-def get_db_connection():
-    """
-    Create a connection to PostgreSQL database using environment variables,
-    with fallback support for local development or Docker environments.
-    """
-    # Check if we're running in Docker
-    in_docker = os.getenv('DOCKER_ENV', 'false').lower() == 'true'
-    
-    # Use DATABASE_URL if provided, else fallback to environment variables
-    database_url = os.getenv('DATABASE_URL')
-    
-    if database_url:
-        parsed_url = urlparse(database_url)
-        host = parsed_url.hostname
-        port = parsed_url.port
-        dbname = parsed_url.path[1:]  # Removing the leading '/'
-        user = parsed_url.username
-        password = parsed_url.password
-    else:
-        # Fallback to environment variables for local or Docker development
-        host = 'postgres' if in_docker else 'localhost'
-        port = '5432'
-        dbname = os.getenv('POSTGRES_DB', 'aphrcdb')
-        user = os.getenv('POSTGRES_USER', 'aphrcuser')
-        password = os.getenv('POSTGRES_PASSWORD', 'kimu')
-
-    try:
-        conn = psycopg2.connect(
-            dbname=dbname,
-            user=user,
-            password=password,
-            host=host,
-            port=port
-        )
-        return conn
-    except psycopg2.OperationalError as e:
-        logger.error(f"Error connecting to the database: {e}")
-        logger.error("\nConnection Details:")
-        logger.error(f"Database: {dbname}")
-        logger.error(f"User: {user}")
-        logger.error(f"Host: {host}")
-        logger.error(f"Port: {port}")
-        raise
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO, 
+    format='%(asctime)s - %(levelname)s: %(message)s',
+    datefmt='%Y-%m-%d %H:%M:%S'
+)
+logger = logging.getLogger(__name__)
 
 def setup_gemini():
     """Initialize the Gemini API with the API key."""
@@ -70,7 +33,7 @@ def setup_gemini():
 def summarize(title: str, abstract: str) -> Optional[str]:
     """Create a summary using Gemini AI."""
     try:
-        if abstract == "N/A":
+        if not abstract or abstract.strip() == "N/A":
             return "No abstract available for summarization"
             
         model = setup_gemini()
@@ -104,21 +67,20 @@ def convert_inverted_index_to_text(inverted_index: Dict) -> str:
 
 def safe_str(value: Any) -> str:
     """Convert a value to string, handling None values."""
-    if value is None:
-        return "N/A"
-    return str(value)
+    return str(value) if value is not None else "N/A"
 
 class DatabaseManager:
     def __init__(self):
         self.conn = get_db_connection()
         self.cur = self.conn.cursor()
 
-    def add_tag(self, tag_name: str, tag_type: str) -> int:
+    def add_tag(self, tag_name: str, tag_type: str = 'general') -> int:
         """Add a tag and return its ID. If tag exists, return existing ID."""
         try:
+            full_tag_name = f"{tag_type}:{tag_name}"
             self.cur.execute(
                 "SELECT tag_id FROM tags WHERE tag_name = %s",
-                (f"{tag_type}:{tag_name}",)
+                (full_tag_name,)
             )
             result = self.cur.fetchone()
             if result:
@@ -126,7 +88,7 @@ class DatabaseManager:
             
             self.cur.execute(
                 "INSERT INTO tags (tag_name) VALUES (%s) RETURNING tag_id",
-                (f"{tag_type}:{tag_name}",)
+                (full_tag_name,)
             )
             tag_id = self.cur.fetchone()[0]
             self.conn.commit()
@@ -136,7 +98,7 @@ class DatabaseManager:
             logger.error(f"Error adding tag: {e}")
             raise
 
-    def add_author(self, name: str, orcid: str, author_identifier: str) -> int:
+    def add_author(self, name: str, orcid: str = None, author_identifier: str = None) -> int:
         """Add an author and return their ID. If author exists, return existing ID."""
         try:
             self.cur.execute("""
@@ -213,28 +175,29 @@ class OpenAlexProcessor:
     def __init__(self):
         """Initialize the OpenAlex processor."""
         self.base_url = os.getenv('OPENALEX_API_URL', 'https://api.openalex.org')
-        self.institution_id = 'I4210129448'  # APHRC institution ID
+        self.institution_id = os.getenv('OPENALEX_INSTITUTION_ID', 'I4210129448')  # APHRC institution ID
         self.db = DatabaseManager()
     
-    def process_works(self):
-        """Process works and save to database, limited to 10 publications."""
+    def process_works(self, max_publications: int = 10):
+        """Process works and save to database."""
         url = f"{self.base_url}/works?filter=institutions.id:{self.institution_id}&per_page=200"
         processed_count = 0
         
-        while url and processed_count < 10:
+        while url and processed_count < max_publications:
             try:
                 logger.info(f"Fetching data from: {url}")
-                response = requests.get(url, headers={'User-Agent': 'YourApp/1.0'})
+                response = requests.get(url, headers={'User-Agent': 'APHRC Publication Processor/1.0'})
                 response.raise_for_status()
                 data = response.json()
                 
-                if 'results' not in data:
+                if not data.get('results'):
                     logger.warning("No results found in response")
                     break
                 
                 for work in data['results']:
-                    if processed_count >= 10:
+                    if processed_count >= max_publications:
                         break
+                    
                     try:
                         doi = safe_str(work.get('doi'))
                         if doi == "N/A":
@@ -255,24 +218,26 @@ class OpenAlexProcessor:
                         for authorship in work.get('authorships', []):
                             author_name = authorship.get('author', {}).get('display_name')
                             orcid = authorship.get('author', {}).get('orcid')
-                            author_identifier = authorship.get('author', {}).get('author_identifier')
+                            author_identifier = authorship.get('author', {}).get('id')
                             
-                            author_id = self.db.add_author(author_name, orcid, author_identifier)
-                            self.db.link_author_publication(author_id, doi)
+                            if author_name:
+                                author_id = self.db.add_author(author_name, orcid, author_identifier)
+                                self.db.link_author_publication(author_id, doi)
                         
-                        # Process tags
+                        # Process tags/concepts
                         for tag in work.get('concepts', []):
                             tag_name = tag.get('display_name')
-                            tag_id = self.db.add_tag(tag_name, 'field_of_study')
-                            self.db.link_publication_tag(doi, tag_id)
+                            if tag_name:
+                                tag_id = self.db.add_tag(tag_name, 'field_of_study')
+                                self.db.link_publication_tag(doi, tag_id)
                         
                         processed_count += 1
-                        logger.info(f"Processed {processed_count} publications so far.")
+                        logger.info(f"Processed {processed_count} publications.")
                         
                     except Exception as e:
-                        logger.error(f"Error processing work with DOI {doi}: {e}")
+                        logger.error(f"Error processing individual work: {e}")
                 
-                # Check if there's a next page of results
+                # Check for next page of results
                 url = data.get('meta', {}).get('next')
                 if not url:
                     break
@@ -280,9 +245,21 @@ class OpenAlexProcessor:
             except requests.RequestException as e:
                 logger.error(f"Request failed: {e}")
                 break
-        logger.info("Finished processing publications")
+        
+        logger.info(f"Finished processing {processed_count} publications")
+
+    def close(self):
+        """Close database connection and manager."""
+        self.db.close()
+
+def main():
+    processor = OpenAlexProcessor()
+    try:
+        processor.process_works()
+    except Exception as e:
+        logger.error(f"Error in main process: {e}")
+    finally:
+        processor.close()
 
 if __name__ == "__main__":
-    processor = OpenAlexProcessor()
-    processor.process_works()
-    processor.db.close()
+    main()

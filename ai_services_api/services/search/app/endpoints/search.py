@@ -1,119 +1,134 @@
-from fastapi import APIRouter, Request, Form, HTTPException
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi import APIRouter, HTTPException, Query
+from fastapi.responses import JSONResponse
+from pydantic import BaseModel
+from typing import List, Optional
+import logging
 from ai_services_api.services.search.search_engine import SearchEngine
-from ai_services_api.services.search.experts_manager import ExpertsManager
+from ai_services_api.services.search.database_manager import DatabaseManager
 
-router = APIRouter()  # Now APIRouter is defined properly
+# Set up logging
+logger = logging.getLogger(__name__)
 
-# Global search engine and experts manager
-search_engine = SearchEngine()
-experts_manager = ExpertsManager()
+# Create router
+router = APIRouter()
 
-@router.on_event("startup")
-async def startup_event():
-    """
-    Startup event to ensure index is ready
-    """
+# Initialize components
+try:
+    logger.info("Initializing SearchEngine and DatabaseManager...")
+    search_engine = SearchEngine()
+    db_manager = DatabaseManager()
+    logger.info("SearchEngine and DatabaseManager initialized successfully")
+except Exception as e:
+    logger.error(f"Failed to initialize components: {e}")
+    raise
+
+@router.get("/predict")
+async def predict_queries(
+    partial_query: str = Query(..., description="Partial query to get predictions for"),
+    limit: int = Query(5, description="Number of predictions to return")
+):
+    """Get query predictions based on partial input."""
+    logger.info(f"Received prediction request for: {partial_query}")
     try:
-        # Attempt to read the index (removed FAISS index creation)
-        SearchEngine()
-    except Exception:
-        # No longer attempting to create FAISS index
-        pass
+        if len(partial_query) < 2:
+            return []
+            
+        # Get predictions from database
+        db_predictions = db_manager.get_matching_queries(
+            partial_query=partial_query,
+            limit=limit
+        )
+        logger.info(f"DB predictions: {db_predictions}")
+        
+        # Get predictions from search engine
+        search_predictions = []
+        try:
+            search_predictions = search_engine.predict_queries(
+                partial_query=partial_query,
+                limit=limit
+            )
+            logger.info(f"Search engine predictions: {search_predictions}")
+        except Exception as e:
+            logger.warning(f"Search engine predictions failed: {e}")
+        
+        # Combine and deduplicate predictions
+        all_predictions = []
+        seen = set()
+        
+        # Add database predictions first
+        for pred in db_predictions:
+            if pred.lower() not in seen:
+                all_predictions.append(pred)
+                seen.add(pred.lower())
+                
+        # Add search predictions
+        for pred in search_predictions:
+            if pred.lower() not in seen and len(all_predictions) < limit:
+                all_predictions.append(pred)
+                seen.add(pred.lower())
+        
+        logger.info(f"Returning predictions: {all_predictions}")
+        return all_predictions[:limit]
+        
+    except Exception as e:
+        logger.error(f"Prediction error: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
 
-@router.get("/", response_class=HTMLResponse)
-async def read_root(request: Request):
-    """
-    Render the main search page
-    """
-    return templates.TemplateResponse(
-        "index.html",
-        {"request": request, "results": [], "title_results": []}
-    )
+@router.get("/")
+async def search(
+    query: str,
+    limit: Optional[int] = 5
+):
+    """Perform a semantic search and store the query in history."""
+    try:
+        logger.info(f"Received search request - query: {query}, limit: {limit}")
+        
+        results = search_engine.search(
+            query=query,
+            k=limit
+        )
+        
+        try:
+            query_id = db_manager.add_query(
+                query=query,
+                result_count=len(results),
+                search_type='semantic'
+            )
+            logger.info(f"Successfully stored query with ID: {query_id}")
+        except Exception as db_error:
+            logger.error(f"Failed to store query in database: {db_error}")
+        
+        formatted_results = [{
+            'title': r['metadata'].get('title', ''),
+            'abstract': r['metadata'].get('abstract', ''),
+            'summary': r['metadata'].get('summary', ''),
+            'tags': r['metadata'].get('tags', ''),
+            'authors': r['metadata'].get('authors', ''),
+            'similarity_score': r['similarity_score']
+        } for r in results]
+        
+        return formatted_results
+        
+    except Exception as e:
+        logger.error(f"Search error: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
 
-@router.post("/search", response_class=HTMLResponse)
-async def semantic_search(request: Request, query: str = Form(...)):
-    """
-    Perform semantic search and return results
-    """
-    # Perform search
-    results = search_engine.search(query)
+@router.get("/popular")
+async def get_popular_searches(limit: Optional[int] = 10):
+    """Get most popular searches from the database."""
+    try:
+        popular_searches = db_manager.get_popular_queries(limit=limit)
+        return popular_searches
+    except Exception as e:
+        logger.error(f"Error getting popular searches: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
 
-    # Render template with results
-    return templates.TemplateResponse(
-        "index.html",
-        {
-            "request": request,
-            "results": results,
-            "query": query,
-            "title_results": []
-        }
-    )
-
-@router.post("/search-title", response_class=HTMLResponse)
-async def title_search(request: Request, title: str = Form(...)):
-    """
-    Search for documents by title
-    """
-    # Perform title search
-    title_results = search_engine.search_by_title(title)
-
-    # Render template with results
-    return templates.TemplateResponse(
-        "index.html",
-        {
-            "request": request,
-            "results": [],
-            "title_results": title_results,
-            "title_query": title
-        }
-    )
-
-@router.get("/get-summary")
-async def get_summary(title: str):
-    """
-    API endpoint to get summary by title
-    """
-    # Get summary by title
-    summary = search_engine.get_summary_by_title(title)
-
-    if not summary:
-        raise HTTPException(status_code=404, detail="Document not found")
-
-    return {
-        "title": summary['Title'],
-        "summary": summary['Summary'],
-        "domain": summary['Domain'],
-        "link": summary['Link']
-    }
-
-@router.get("/get-experts")
-async def get_experts(domain: str):
-    """
-    API endpoint to get experts by domain
-    """
-    experts = experts_manager.find_experts_by_domain(domain)
-    return experts
-
-@router.get("/autocomplete")
-async def autocomplete(query: str):
-    """
-    Provide autocomplete suggestions based on the query
-    """
-    # Perform semantic search with a higher k value to get more potential matches
-    suggestions = search_engine.search(query, k=10)
-    
-    # Extract unique titles and summaries
-    unique_suggestions = []
-    seen_titles = set()
-    
-    for result in suggestions:
-        title = result['metadata']['Title']
-        if title not in seen_titles:
-            unique_suggestions.append({
-                'title': title,
-                'summary': result['metadata']['Summary'][:100] + '...'
-            })
-            seen_titles.add(title)
-    
-    return JSONResponse(content=unique_suggestions)
+@router.get("/recent")
+async def get_recent_searches(limit: Optional[int] = 10):
+    """Get most recent searches from the database."""
+    try:
+        recent_searches = db_manager.get_recent_queries(limit=limit)
+        return recent_searches
+    except Exception as e:
+        logger.error(f"Error getting recent searches: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
