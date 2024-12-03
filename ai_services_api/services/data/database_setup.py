@@ -27,11 +27,11 @@ def get_connection_params():
     else:
         in_docker = os.getenv('DOCKER_ENV', 'false').lower() == 'true'
         return {
-            'host': 'postgres' if in_docker else 'localhost',
+            'host': '167.86.85.127' if in_docker else 'localhost',
             'port': '5432',
-            'dbname': os.getenv('POSTGRES_DB', 'aphrcdb'),
-            'user': os.getenv('POSTGRES_USER', 'aphrcuser'),
-            'password': os.getenv('POSTGRES_PASSWORD', 'kimu')
+            'dbname': os.getenv('POSTGRES_DB', 'aphrc'),
+            'user': os.getenv('POSTGRES_USER', 'postgres'),
+            'password': os.getenv('POSTGRES_PASSWORD', 'p0stgres')
         }
 
 def get_db_connection(dbname=None):
@@ -83,14 +83,12 @@ def create_database_if_not_exists():
             conn.close()
 
 def create_tables():
-    """Create the necessary database tables."""
     conn = get_db_connection()
     cur = conn.cursor()
 
     sql_statements = [
-        # Core publication tables
         """
-        CREATE TABLE IF NOT EXISTS publications (
+        CREATE TABLE IF NOT EXISTS publications_ai (
             doi VARCHAR(255) PRIMARY KEY,
             title TEXT NOT NULL,
             abstract TEXT,
@@ -98,20 +96,20 @@ def create_tables():
         );
         """,
         """
-        CREATE TABLE IF NOT EXISTS tags (
+        CREATE TABLE IF NOT EXISTS tags_ai (
             tag_id SERIAL PRIMARY KEY,
             tag_name VARCHAR(255) NOT NULL
         );
         """,
         """
-        CREATE TABLE IF NOT EXISTS publication_tag (
-            publication_doi VARCHAR(255) REFERENCES publications(doi) ON DELETE CASCADE,
-            tag_id INT REFERENCES tags(tag_id) ON DELETE CASCADE,
+        CREATE TABLE IF NOT EXISTS publication_tag_ai (
+            publication_doi VARCHAR(255) REFERENCES publications_ai(doi) ON DELETE CASCADE,
+            tag_id INT REFERENCES tags_ai(tag_id) ON DELETE CASCADE,
             PRIMARY KEY (publication_doi, tag_id)
         );
         """,
         """
-        CREATE TABLE IF NOT EXISTS authors (
+        CREATE TABLE IF NOT EXISTS authors_ai (
             author_id SERIAL PRIMARY KEY,
             name TEXT NOT NULL,
             orcid VARCHAR(255),
@@ -120,14 +118,14 @@ def create_tables():
         );
         """,
         """
-        CREATE TABLE IF NOT EXISTS author_publication (
-            author_id INT REFERENCES authors(author_id) ON DELETE CASCADE,
-            doi VARCHAR(255) REFERENCES publications(doi) ON DELETE CASCADE,
+        CREATE TABLE IF NOT EXISTS author_publication_ai (
+            author_id INT REFERENCES authors_ai(author_id) ON DELETE CASCADE,
+            doi VARCHAR(255) REFERENCES publications_ai(doi) ON DELETE CASCADE,
             PRIMARY KEY (author_id, doi)
         );
         """,
         """
-        CREATE TABLE IF NOT EXISTS experts (
+        CREATE TABLE IF NOT EXISTS experts_ai (
             orcid VARCHAR(255) PRIMARY KEY,
             firstname VARCHAR(255) NOT NULL,
             lastname VARCHAR(255) NOT NULL,
@@ -136,10 +134,8 @@ def create_tables():
             subfields TEXT[]
         );
         """,
-        
-        # Search history tables
         """
-        CREATE TABLE IF NOT EXISTS query_history (
+        CREATE TABLE IF NOT EXISTS query_history_ai (
             query_id SERIAL PRIMARY KEY,
             query TEXT NOT NULL,
             timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -148,26 +144,24 @@ def create_tables():
         );
         """,
         """
-        CREATE TABLE IF NOT EXISTS term_frequencies (
+        CREATE TABLE IF NOT EXISTS term_frequencies_ai (
             term_id SERIAL PRIMARY KEY,
             term TEXT NOT NULL UNIQUE,
             frequency INTEGER DEFAULT 1,
             last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         );
         """,
-        
-        # Create indices for search tables
         """
         CREATE INDEX IF NOT EXISTS idx_query_history_query 
-        ON query_history (query text_pattern_ops);
+        ON query_history_ai (query text_pattern_ops);
         """,
         """
         CREATE INDEX IF NOT EXISTS idx_query_history_timestamp 
-        ON query_history (timestamp DESC);
+        ON query_history_ai (timestamp DESC);
         """,
         """
         CREATE INDEX IF NOT EXISTS idx_term_frequencies_term 
-        ON term_frequencies (term);
+        ON term_frequencies_ai (term);
         """
     ]
 
@@ -187,20 +181,19 @@ def create_tables():
         conn.close()
 
 def drop_all_tables():
-    """Drop all tables in the database."""
     conn = get_db_connection()
     cur = conn.cursor()
 
     try:
         tables = [
-            'term_frequencies',
-            'query_history',
-            'experts', 
-            'author_publication', 
-            'authors', 
-            'publication_tag', 
-            'tags', 
-            'publications'
+            'term_frequencies_ai',
+            'query_history_ai',
+            'experts_ai', 
+            'author_publication_ai', 
+            'authors_ai', 
+            'publication_tag_ai', 
+            'tags_ai', 
+            'publications_ai'
         ]
 
         for table in tables:

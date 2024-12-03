@@ -54,11 +54,11 @@ class IndexCreator:
             user = parsed_url.username
             password = parsed_url.password
         else:
-            host = 'postgres' if in_docker else 'localhost'
+            host = '167.86.85.127' if in_docker else 'localhost'
             port = '5432'
-            dbname = os.getenv('POSTGRES_DB', 'aphrcdb')
-            user = os.getenv('POSTGRES_USER', 'aphrcuser')
-            password = os.getenv('POSTGRES_PASSWORD', 'kimu')
+            dbname = os.getenv('POSTGRES_DB', 'aphrc')
+            user = os.getenv('POSTGRES_USER', 'postgres')
+            password = os.getenv('POSTGRES_PASSWORD', 'p0stgres')
 
         try:
             conn = psycopg2.connect(
@@ -88,11 +88,11 @@ class IndexCreator:
                 p.summary,
                 string_agg(DISTINCT t.tag_name, ' | ') as tags,
                 string_agg(DISTINCT a.name, ' | ') as authors
-            FROM publications p
-            LEFT JOIN publication_tag pt ON pt.publication_doi = p.doi
-            LEFT JOIN tags t ON t.tag_id = pt.tag_id
-            LEFT JOIN author_publication ap ON ap.doi = p.doi
-            LEFT JOIN authors a ON a.author_id = ap.author_id
+            FROM publications_ai p
+            LEFT JOIN publication_tag_ai pt ON pt.publication_doi = p.doi
+            LEFT JOIN tags_ai t ON t.tag_id = pt.tag_id
+            LEFT JOIN author_publication_ai ap ON ap.doi = p.doi
+            LEFT JOIN authors_ai a ON a.author_id = ap.author_id
             GROUP BY p.doi, p.title, p.abstract, p.summary;
             """
 

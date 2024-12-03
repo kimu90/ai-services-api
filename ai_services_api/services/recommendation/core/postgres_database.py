@@ -1,9 +1,12 @@
 import os
 import psycopg2
 from psycopg2 import sql
-from urllib.parse import urlparse
 import logging
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List
+from datetime import datetime
+import json
+from urllib.parse import urlparse
+
 
 logger = logging.getLogger(__name__)
 
@@ -23,11 +26,11 @@ def get_connection_params():
     else:
         in_docker = os.getenv('DOCKER_ENV', 'false').lower() == 'true'
         return {
-            'host': 'postgres' if in_docker else 'localhost',
+            'host': '167.86.85.127' if in_docker else 'localhost',
             'port': '5432',
-            'dbname': os.getenv('POSTGRES_DB', 'aphrcdb'),
-            'user': os.getenv('POSTGRES_USER', 'aphrcuser'),
-            'password': os.getenv('POSTGRES_PASSWORD', 'kimu')
+            'dbname': os.getenv('POSTGRES_DB', 'aphrc'),
+            'user': os.getenv('POSTGRES_USER', 'postgres'),
+            'password': os.getenv('POSTGRES_PASSWORD', 'p0stgres')
         }
 
 def get_db_connection(dbname=None):
@@ -43,6 +46,7 @@ def get_db_connection(dbname=None):
     except psycopg2.OperationalError as e:
         logger.error(f"Error connecting to the database: {e}")
         raise
+
 
 def insert_expert(conn, expert_data: Dict[str, Any]):
     """Insert expert data into PostgreSQL database"""
@@ -60,7 +64,7 @@ def insert_expert(conn, expert_data: Dict[str, Any]):
             
             # Insert into experts table
             cur.execute("""
-                INSERT INTO experts (orcid, firstname, lastname, domains, fields, subfields)
+                INSERT INTO experts_ai (orcid, firstname, lastname, domains, fields, subfields)
                 VALUES (%s, %s, %s, %s, %s, %s)
                 ON CONFLICT (orcid) 
                 DO UPDATE SET 
@@ -84,6 +88,7 @@ def insert_expert(conn, expert_data: Dict[str, Any]):
         conn.rollback()
         logger.error(f"Error inserting expert data: {e}")
         raise
+
 
 def get_expert(conn, orcid: str) -> Optional[Dict[str, Any]]:
     """Retrieve expert data from PostgreSQL database"""

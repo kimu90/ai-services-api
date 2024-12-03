@@ -22,19 +22,20 @@ services:
       - NEO4J_URI=bolt://neo4j:7687
       - DEBUG=True
       - GEMINI_API_KEY=${GEMINI_API_KEY}
-      - POSTGRES_HOST=postgres
-      - POSTGRES_DB=${POSTGRES_DB:-aphrcdb}
-      - POSTGRES_USER=${POSTGRES_USER:-aphrcuser}
-      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-kimu}
+      # Update these to point to remote database
+      - POSTGRES_HOST=167.86.85.127
+      - POSTGRES_DB=${POSTGRES_DB:-aphrc}
+      - POSTGRES_USER=${POSTGRES_USER:-postgres}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-p0stgres}
       - NEO4J_USER=${NEO4J_USER:-neo4j}
       - NEO4J_PASSWORD=${NEO4J_PASSWORD:-password123456789!}
-      - DATABASE_URL=postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+      # Update DATABASE_URL to point to remote database
+      - DATABASE_URL=postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@167.86.85.127:5432/${POSTGRES_DB}
       - DOCKER_ENV=true
       - TRANSFORMERS_CACHE=/code/cache
       - HF_HOME=/code/cache
       - MODEL_PATH=/code/models/search
       - BASE_DIR=/code
-    user: "${UID:-1000}:${GID:-1001}"
     depends_on:
       redis:
         condition: service_healthy
@@ -121,9 +122,9 @@ services:
     networks:
       - aphrc-network
     environment:
-      POSTGRES_DB: "${POSTGRES_DB:-aphrcdb}"
-      POSTGRES_USER: "${POSTGRES_USER:-aphrcuser}"
-      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:-kimu}"
+      POSTGRES_DB: "${POSTGRES_DB:-aphrc}"
+      POSTGRES_USER: "${POSTGRES_USER:-postgres}"
+      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:-p0stgres}"
       PGDATA: /var/lib/postgresql/data/pgdata
     ports:
       - "5432:5432"
@@ -131,7 +132,7 @@ services:
       - postgres-data:/var/lib/postgresql/data
       - ./logs/postgres:/var/log/postgresql:rw  # Added :rw for consistency
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-aphrcuser} -d ${POSTGRES_DB:-aphrcdb}"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-aphrc}"]
       interval: 20s
       timeout: 10s
       retries: 5

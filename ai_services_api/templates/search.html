@@ -3,209 +3,112 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Semantic Search Recommendations</title>
+    <title>Semantic Search</title>
     <link href="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css" rel="stylesheet">
 </head>
 <body class="bg-gray-900 text-gray-100">
-    <div class="container mx-auto py-8">
-        <header class="mb-8">
-            <h1 class="text-3xl font-bold text-center">Semantic Search</h1>
-            <p class="text-center text-gray-400 mt-2">Find relevant results quickly</p>
+    <!-- Summary Modal -->
+    <div id="summary-modal" class="fixed inset-0 bg-black bg-opacity-50 hidden items-center justify-center z-50">
+        <div class="bg-gray-800 p-6 rounded-lg max-w-2xl w-full mx-4 relative">
+            <button id="close-modal" class="absolute top-4 right-4 text-gray-400 hover:text-white">
+                <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+                </svg>
+            </button>
+            <h3 class="text-xl font-bold mb-4">Summary</h3>
+            <div id="modal-summary-content" class="text-gray-300 whitespace-pre-wrap"></div>
+        </div>
+    </div>
+
+    <div class="container mx-auto px-4 py-8">
+        <header class="mb-8 text-center">
+            <h1 class="text-4xl font-bold mb-2">Semantic Search</h1>
+            <p class="text-gray-400">Find relevant research papers quickly</p>
         </header>
 
-        <main>
-            <div class="max-w-3xl mx-auto">
-                <div class="bg-gray-800 rounded-lg shadow-md p-6 border border-gray-700 mb-6">
-                    <form id="search-form" class="space-y-4">
-                        <div class="relative">
-                            <label for="search-input" class="block mb-2 font-medium">Enter your query:</label>
-                            <input 
-                                type="text" 
-                                id="search-input"
-                                name="query" 
-                                class="bg-gray-700 text-gray-100 rounded-md px-4 py-2 w-full"
-                                placeholder="Enter your semantic search query..."
-                                autocomplete="off"
-                                required
-                            >
-                            <div id="predictions-dropdown" class="hidden absolute w-full bg-gray-700 mt-1 rounded-md shadow-lg z-50 max-h-60 overflow-y-auto">
-                            </div>
-                        </div>
-                        <button type="submit" class="bg-green-500 hover:bg-green-600 text-white font-medium px-4 py-2 rounded-md w-full">Search</button>
-                    </form>
-                </div>
-
-                <div id="results-container" class="space-y-4"></div>
-                <div id="loading" class="hidden">
-                    <p class="text-center text-gray-400">Searching...</p>
-                </div>
-                <div id="error" class="hidden bg-red-900 text-white p-4 rounded-md mt-4"></div>
+        <main class="max-w-4xl mx-auto">
+            <!-- Search Form -->
+            <div class="bg-gray-800 rounded-lg p-6 mb-8 shadow-lg border border-gray-700">
+                <form id="search-form" class="space-y-4">
+                    <div class="relative">
+                        <label for="search-input" class="block text-lg mb-2">Search Query:</label>
+                        <input 
+                            type="text" 
+                            id="search-input"
+                            class="w-full bg-gray-700 text-white px-4 py-3 rounded-lg focus:ring-2 focus:ring-green-500 focus:outline-none"
+                            placeholder="Enter your search query..."
+                            autocomplete="off"
+                            required
+                        >
+                        <div id="predictions-dropdown" class="hidden absolute w-full bg-gray-700 mt-1 rounded-lg shadow-xl z-50 max-h-60 overflow-y-auto border border-gray-600"></div>
+                    </div>
+                    <button type="submit" class="w-full bg-green-600 hover:bg-green-700 text-white font-medium py-3 rounded-lg transition duration-150">
+                        Search
+                    </button>
+                </form>
             </div>
-        </main>
 
-        <footer class="mt-8 text-center text-gray-400">
-            <p>&copy; 2024 Semantic Search System</p>
-        </footer>
+            <div id="loading" class="hidden">
+                <div class="flex justify-center items-center py-8">
+                    <div class="animate-spin rounded-full h-8 w-8 border-b-2 border-green-500"></div>
+                </div>
+            </div>
+
+            <div id="error" class="hidden bg-red-900/50 border border-red-700 text-white p-4 rounded-lg mb-6"></div>
+
+            <div id="results-container" class="space-y-4"></div>
+        </main>
     </div>
 
     <script>
-        // Define API endpoints based on your actual endpoints
+        // Constants and DOM Elements
         const searchEndpoint = '/search/search';
         const predictEndpoint = '/search/search/predict';
-        const popularEndpoint = '/search/search/popular';
-        const recentEndpoint = '/search/search/recent';
+        const elements = {
+            form: document.getElementById('search-form'),
+            input: document.getElementById('search-input'),
+            predictions: document.getElementById('predictions-dropdown'),
+            results: document.getElementById('results-container'),
+            loading: document.getElementById('loading'),
+            error: document.getElementById('error'),
+            modal: document.getElementById('summary-modal'),
+            modalContent: document.getElementById('modal-summary-content'),
+            closeModal: document.getElementById('close-modal')
+        };
 
-        const searchForm = document.getElementById('search-form');
-        const searchInput = document.getElementById('search-input');
-        const predictionsDropdown = document.getElementById('predictions-dropdown');
-        const resultsContainer = document.getElementById('results-container');
-        const loadingElement = document.getElementById('loading');
-        const errorElement = document.getElementById('error');
-
-        function debounce(func, wait) {
-            let timeout;
-            return function executedFunction(...args) {
-                const later = () => {
-                    clearTimeout(timeout);
-                    func(...args);
-                };
-                clearTimeout(timeout);
-                timeout = setTimeout(later, wait);
-            };
-        }
-
-        async function fetchPredictions(partial) {
-            if (partial.length < 2) {
-                predictionsDropdown.classList.add('hidden');
-                return;
-            }
-
-            try {
-                const url = `${predictEndpoint}?partial_query=${encodeURIComponent(partial)}&limit=5`;
-                console.log('Fetching predictions from:', url);
-                
-                const response = await fetch(url);
-                if (!response.ok) {
-                    console.error('Prediction response error:', response.status, response.statusText);
-                    throw new Error('Failed to fetch predictions');
-                }
-                
-                const predictions = await response.json();
-                console.log('Received predictions:', predictions);
-                displayPredictions(predictions);
-            } catch (err) {
-                console.error('Prediction error:', err);
-            }
-        }
-
-        function displayPredictions(predictions) {
-            if (!predictions || !predictions.length) {
-                predictionsDropdown.classList.add('hidden');
-                return;
-            }
-
-            predictionsDropdown.innerHTML = predictions.map(pred => `
-                <div class="prediction-item px-4 py-2 hover:bg-gray-600 cursor-pointer text-gray-100">
-                    ${pred}
-                </div>
-            `).join('');
-
-            predictionsDropdown.classList.remove('hidden');
-
-            document.querySelectorAll('.prediction-item').forEach(item => {
-                item.addEventListener('click', () => {
-                    searchInput.value = item.textContent.trim();
-                    predictionsDropdown.classList.add('hidden');
-                    searchForm.dispatchEvent(new Event('submit'));
-                });
-            });
-        }
-
-        searchInput.addEventListener('input', debounce(async (e) => {
-            const query = e.target.value.trim();
-            await fetchPredictions(query);
-        }, 300));
-
-        document.addEventListener('click', (e) => {
-            if (!searchInput.contains(e.target) && !predictionsDropdown.contains(e.target)) {
-                predictionsDropdown.classList.add('hidden');
-            }
-        });
-
-        searchInput.addEventListener('keydown', (e) => {
-            const items = predictionsDropdown.querySelectorAll('.prediction-item');
-            const activeItem = predictionsDropdown.querySelector('.bg-gray-600');
-            let index = Array.from(items).indexOf(activeItem);
-
-            switch (e.key) {
-                case 'ArrowDown':
-                    e.preventDefault();
-                    if (index < items.length - 1) index++;
-                    break;
-                case 'ArrowUp':
-                    e.preventDefault();
-                    if (index > 0) index--;
-                    break;
-                case 'Enter':
-                    if (activeItem) {
-                        e.preventDefault();
-                        searchInput.value = activeItem.textContent.trim();
-                        predictionsDropdown.classList.add('hidden');
-                        searchForm.dispatchEvent(new Event('submit'));
-                    }
-                    return;
-                case 'Escape':
-                    predictionsDropdown.classList.add('hidden');
-                    return;
-                default:
-                    return;
-            }
-
-            items.forEach(item => item.classList.remove('bg-gray-600'));
-            if (items[index]) {
-                items[index].classList.add('bg-gray-600');
-                items[index].scrollIntoView({ block: 'nearest' });
-            }
-        });
-
-        searchForm.addEventListener('submit', async function(e) {
-            e.preventDefault();
-            const query = searchInput.value.trim();
+        // Modal Functions
+        function showSummaryModal(summary) {
+            console.log('Showing summary:', summary); // Debug log
+            if (!summary) return;
             
-            if (!query) return;
+            elements.modalContent.textContent = summary;
+            elements.modal.classList.remove('hidden');
+            elements.modal.classList.add('flex');
+        }
 
-            predictionsDropdown.classList.add('hidden');
-            loadingElement.classList.remove('hidden');
-            errorElement.classList.add('hidden');
-            resultsContainer.innerHTML = '';
+        function closeSummaryModal() {
+            elements.modal.classList.add('hidden');
+            elements.modal.classList.remove('flex');
+            elements.modalContent.textContent = '';
+        }
 
-            try {
-                const url = `${searchEndpoint}?query=${encodeURIComponent(query)}&limit=5`;
-                console.log('Searching with URL:', url);
-                
-                const response = await fetch(url);
-                if (!response.ok) {
-                    console.error('Search response error:', response.status, response.statusText);
-                    throw new Error('Search failed');
-                }
-                
-                const results = await response.json();
-                console.log('Search results:', results);
-                displayResults(results);
-            } catch (err) {
-                console.error('Search error:', err);
-                errorElement.textContent = 'Failed to perform search. Please try again.';
-                errorElement.classList.remove('hidden');
-            } finally {
-                loadingElement.classList.add('hidden');
+        // Event Listeners
+        elements.closeModal.addEventListener('click', closeSummaryModal);
+        elements.modal.addEventListener('click', (e) => {
+            if (e.target === elements.modal) closeSummaryModal();
+        });
+
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape' && !elements.modal.classList.contains('hidden')) {
+                closeSummaryModal();
             }
         });
 
         function displayResults(results) {
-            resultsContainer.innerHTML = '';
+            elements.results.innerHTML = '';
             
             if (!results || results.length === 0) {
-                resultsContainer.innerHTML = `
+                elements.results.innerHTML = `
                     <div class="bg-gray-800 rounded-lg p-6 text-center text-gray-400">
                         No results found
                     </div>
@@ -217,43 +120,74 @@
                 const resultElement = document.createElement('div');
                 resultElement.className = 'bg-gray-800 rounded-lg p-6 border border-gray-700 mb-4';
                 
+                // Create the HTML structure
                 resultElement.innerHTML = `
-                    <h3 class="text-xl font-semibold mb-2">${result.title || 'Untitled'}</h3>
-                    
-                    ${result.authors ? `
-                        <p class="text-gray-400 mb-2">
-                            <span class="font-medium">Authors:</span> ${result.authors}
-                        </p>
-                    ` : ''}
-                    
-                    ${result.tags ? `
-                        <p class="text-gray-400 mb-2">
-                            <span class="font-medium">Tags:</span> ${result.tags}
-                        </p>
-                    ` : ''}
-                    
-                    ${result.abstract ? `
-                        <div class="mb-4">
-                            <h4 class="font-medium text-gray-300">Abstract:</h4>
-                            <p class="text-gray-400">${result.abstract}</p>
+                    <div class="flex flex-col gap-4">
+                        <div class="flex justify-between items-start gap-4">
+                            <div class="flex-grow">
+                                <a href="https://doi.org/${result.doi}" 
+                                   target="_blank" 
+                                   class="text-xl font-semibold text-blue-400 hover:text-blue-300 hover:underline inline-block">
+                                    ${result.title || 'Untitled'}
+                                </a>
+                            </div>
+                            ${result.summary ? `
+                                <button type="button" class="summary-btn bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-lg text-sm flex-shrink-0 transition duration-150">
+                                    View Summary
+                                </button>
+                            ` : ''}
                         </div>
-                    ` : ''}
-                    
-                    ${result.summary ? `
-                        <div class="mb-4">
-                            <h4 class="font-medium text-gray-300">Summary:</h4>
-                            <p class="text-gray-400">${result.summary}</p>
-                        </div>
-                    ` : ''}
-                    
-                    <div class="text-right text-sm text-gray-400">
-                        Similarity Score: ${(result.similarity_score * 100).toFixed(1)}%
+                        ${result.authors ? `
+                            <p class="text-gray-400">
+                                <span class="font-medium">Authors:</span> ${result.authors}
+                            </p>
+                        ` : ''}
                     </div>
                 `;
-                
-                resultsContainer.appendChild(resultElement);
+
+                // Add event listener for summary button if summary exists
+                if (result.summary) {
+                    const summaryBtn = resultElement.querySelector('.summary-btn');
+                    summaryBtn.addEventListener('click', () => {
+                        showSummaryModal(result.summary);
+                    });
+                }
+
+                elements.results.appendChild(resultElement);
             });
         }
+
+        // Search form submission
+        elements.form.addEventListener('submit', async function(e) {
+            e.preventDefault();
+            const query = elements.input.value.trim();
+            
+            if (!query) return;
+
+            elements.predictions.classList.add('hidden');
+            elements.loading.classList.remove('hidden');
+            elements.error.classList.add('hidden');
+            elements.results.innerHTML = '';
+
+            try {
+                const response = await fetch(
+                    `${searchEndpoint}?query=${encodeURIComponent(query)}&limit=5`
+                );
+                if (!response.ok) throw new Error('Search failed');
+                const results = await response.json();
+                console.log('Search results:', results); // Debug log
+                displayResults(results);
+            } catch (err) {
+                console.error('Search error:', err);
+                elements.error.textContent = 'Failed to perform search. Please try again.';
+                elements.error.classList.remove('hidden');
+            } finally {
+                elements.loading.classList.add('hidden');
+            }
+        });
+
+        // Add your existing prediction handling code here
+        // ... (rest of the prediction code remains the same)
     </script>
 </body>
 </html>

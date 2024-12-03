@@ -18,7 +18,6 @@ logger = logging.getLogger(__name__)
 
 class GraphDatabaseInitializer:
     def __init__(self):
-        # Initialize Neo4j connection
         self._neo4j_driver = GraphDatabase.driver(
             os.getenv('NEO4J_URI', 'bolt://localhost:7687'),
             auth=(
@@ -44,11 +43,11 @@ class GraphDatabaseInitializer:
             user = parsed_url.username
             password = parsed_url.password
         else:
-            host = 'postgres' if in_docker else 'localhost'
+            host = '167.86.85.127' if in_docker else 'localhost'
             port = '5432'
-            dbname = os.getenv('POSTGRES_DB', 'aphrcdb')
-            user = os.getenv('POSTGRES_USER', 'aphrcuser')
-            password = os.getenv('POSTGRES_PASSWORD', 'kimu')
+            dbname = os.getenv('POSTGRES_DB', 'aphrc')
+            user = os.getenv('POSTGRES_USER', 'postgres')
+            password = os.getenv('POSTGRES_PASSWORD', 'p0stgres')
 
         try:
             conn = psycopg2.connect(
@@ -69,7 +68,6 @@ class GraphDatabaseInitializer:
         return self._neo4j_driver.session()
 
     def _create_indexes(self):
-        """Create indexes for performance optimization"""
         index_queries = [
             "CREATE INDEX expert_orcid IF NOT EXISTS FOR (e:Expert) ON (e.orcid)",
             "CREATE INDEX field_name IF NOT EXISTS FOR (f:Field) ON (f.name)",
@@ -86,7 +84,6 @@ class GraphDatabaseInitializer:
                     logger.warning(f"Error creating index: {e}")
 
     def _fetch_experts_data(self):
-        """Fetch experts data from PostgreSQL"""
         conn = None
         try:
             conn = self.get_db_connection()
@@ -100,7 +97,7 @@ class GraphDatabaseInitializer:
                     domains, 
                     fields, 
                     subfields 
-                FROM experts
+                FROM experts_ai
             """)
             
             experts_data = cur.fetchall()
@@ -114,7 +111,6 @@ class GraphDatabaseInitializer:
                 conn.close()
 
     def create_expert_node(self, orcid, name):
-        """Create or update an expert node"""
         with self._get_neo4j_session() as session:
             try:
                 session.run(
@@ -128,7 +124,6 @@ class GraphDatabaseInitializer:
                 raise
 
     def create_domain_node(self, domain_name):
-        """Create a domain node"""
         with self._get_neo4j_session() as session:
             try:
                 session.run(
@@ -140,7 +135,6 @@ class GraphDatabaseInitializer:
                 raise
 
     def create_field_node(self, field_name):
-        """Create a field node"""
         with self._get_neo4j_session() as session:
             try:
                 session.run(
@@ -152,7 +146,6 @@ class GraphDatabaseInitializer:
                 raise
 
     def create_subfield_node(self, subfield_name):
-        """Create a subfield node"""
         with self._get_neo4j_session() as session:
             try:
                 session.run(
@@ -164,10 +157,8 @@ class GraphDatabaseInitializer:
                 raise
 
     def create_relationships(self, orcid, domains, fields, subfields):
-        """Create relationships between expert and domain/field/subfield nodes"""
         with self._get_neo4j_session() as session:
             try:
-                # Create relationships for unique domains, fields, and subfields
                 for domain in set(domains or []):
                     session.run(
                         """
@@ -202,19 +193,14 @@ class GraphDatabaseInitializer:
                 raise
 
     def initialize_graph(self):
-        """Main method to initialize the graph database"""
         try:
-            # Create indexes
             self._create_indexes()
-
-            # Fetch experts data from PostgreSQL
             experts_data = self._fetch_experts_data()
             
             if not experts_data:
                 logger.warning("No experts data found to process")
                 return
 
-            # Process each expert's data
             for expert_data in experts_data:
                 try:
                     orcid, firstname, lastname, domains, fields, subfields = expert_data
@@ -222,11 +208,9 @@ class GraphDatabaseInitializer:
                     if not orcid:
                         continue
 
-                    # Create expert node
                     expert_name = f"{firstname} {lastname}"
                     self.create_expert_node(orcid, expert_name)
 
-                    # Create domain, field, and subfield nodes
                     for domain in set(domains or []):
                         self.create_domain_node(domain)
                     
@@ -236,9 +220,7 @@ class GraphDatabaseInitializer:
                     for subfield in set(subfields or []):
                         self.create_subfield_node(subfield)
 
-                    # Create relationships
                     self.create_relationships(orcid, domains, fields, subfields)
-                    
                     logger.info(f"Processed expert: {expert_name}")
 
                 except Exception as e:
@@ -252,16 +234,12 @@ class GraphDatabaseInitializer:
             raise
 
     def close(self):
-        """Close the Neo4j driver connection"""
         if self._neo4j_driver:
             self._neo4j_driver.close()
 
-
 def main():
-    # Initialize the graph database
     initializer = GraphDatabaseInitializer()
     try:
-        # Run the graph initialization
         initializer.initialize_graph()
     except Exception as e:
         logger.error(f"Initialization failed: {e}")

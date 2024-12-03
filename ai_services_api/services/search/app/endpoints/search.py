@@ -99,15 +99,17 @@ async def search(
             logger.error(f"Failed to store query in database: {db_error}")
         
         formatted_results = [{
+            'doi': r['metadata'].get('doi', ''),  # Add DOI to the response
             'title': r['metadata'].get('title', ''),
-            'abstract': r['metadata'].get('abstract', ''),
-            'summary': r['metadata'].get('summary', ''),
-            'tags': r['metadata'].get('tags', ''),
             'authors': r['metadata'].get('authors', ''),
-            'similarity_score': r['similarity_score']
+            'summary': r['metadata'].get('summary', '')  # Keep summary in response
         } for r in results]
         
         return formatted_results
+        
+    except Exception as e:
+        logger.error(f"Search error: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
         
     except Exception as e:
         logger.error(f"Search error: {str(e)}")
