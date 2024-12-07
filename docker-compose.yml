@@ -5,37 +5,36 @@ services:
       dockerfile: Dockerfile
     ports:
       - "8000:8000"
-    command: bash /code/init-script.sh
+    command: bash /code/scripts/init-script.sh
     volumes:
       - ./:/code:rw
       - ./logs/api:/code/logs:rw
       - ./ai_services_api/services/search/models:/code/ai_services_api/services/search/models:rw
       - ./cache:/code/cache:rw
-      - ./init-script.sh:/code/init-script.sh:ro
+      - ./scripts/init-script.sh:/code/scripts/init-script.sh:ro
       - type: tmpfs
         target: /code/.initialization_complete
         tmpfs:
           size: 1M
           mode: 0777
-    environment:
+    environment: 
       - REDIS_URL=redis://redis:6379
       - NEO4J_URI=bolt://neo4j:7687
       - DEBUG=True
       - GEMINI_API_KEY=${GEMINI_API_KEY}
-      # Update these to point to remote database
       - POSTGRES_HOST=167.86.85.127
       - POSTGRES_DB=${POSTGRES_DB:-aphrc}
       - POSTGRES_USER=${POSTGRES_USER:-postgres}
       - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-p0stgres}
       - NEO4J_USER=${NEO4J_USER:-neo4j}
       - NEO4J_PASSWORD=${NEO4J_PASSWORD:-password123456789!}
-      # Update DATABASE_URL to point to remote database
-      - DATABASE_URL=postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@167.86.85.127:5432/${POSTGRES_DB}
+      - DATABASE_URL=postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
       - DOCKER_ENV=true
       - TRANSFORMERS_CACHE=/code/cache
       - HF_HOME=/code/cache
       - MODEL_PATH=/code/models/search
       - BASE_DIR=/code
+    user: "${UID:-1000}:${GID:-1001}"
     depends_on:
       redis:
         condition: service_healthy
@@ -47,13 +46,13 @@ services:
       - aphrc-network
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
-      interval: 30s
+      interval: 50s
       timeout: 10s
       retries: 3
-      start_period: 60s
+      start_period: 100s
     env_file:
       - .env
-    restart: unless-stopped
+    restart: "no"
 
   redis:
     image: redis:latest
@@ -66,10 +65,10 @@ services:
       - "6379:6379"
     volumes:
       - redis-data:/data
-      - ./logs/redis:/var/log/redis:rw  # Added :rw for consistency
+      - ./logs/redis:/var/log/redis:rw
     command: redis-server --appendonly yes --loglevel notice --maxmemory 256mb --maxmemory-policy allkeys-lru
     healthcheck:
-      test: ["CMD", "redis-cli", "-h", "localhost", "ping"]  # Updated healthcheck
+      test: ["CMD", "redis-cli", "-h", "localhost", "ping"]
       interval: 30s
       timeout: 10s
       retries: 5
@@ -93,7 +92,7 @@ services:
     networks:
       - aphrc-network
     ports:
-      - "7474:7474"
+      - "7474:7474" 
       - "7687:7687"
     environment:
       NEO4J_AUTH: "${NEO4J_USER:-neo4j}/${NEO4J_PASSWORD:-password123456789!}"
@@ -130,13 +129,13 @@ services:
       - "5432:5432"
     volumes:
       - postgres-data:/var/lib/postgresql/data
-      - ./logs/postgres:/var/log/postgresql:rw  # Added :rw for consistency
+      - ./logs/postgres:/var/log/postgresql:rw
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-aphrc}"]
-      interval: 20s
-      timeout: 10s
-      retries: 5
-      start_period: 120s
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres}"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 60s
     deploy:
       resources:
         limits:
@@ -159,12 +158,117 @@ services:
       postgres:
         condition: service_healthy
 
+  # Airflow Services (Commented out for development)
+  # To enable, remove the "#" from the following sections
+  
+  #airflow-webserver:
+  #  build:
+  #    context: .
+  #    dockerfile: Dockerfile.airflow
+  #  user: "${AIRFLOW_UID:-50000}:0"
+  #  command: bash -c "
+  #    airflow db migrate &&
+  #    airflow db check &&
+  #    airflow connections create-default-connections &&
+  #    airflow users create --username admin --firstname Admin --lastname User --role Admin --email briankimu97@gmail.com --password admin &&
+  #    airflow webserver"
+  #  depends_on:
+  #    postgres:
+  #      condition: service_healthy
+  #    redis:
+  #      condition: service_healthy
+  #  environment:
+  #    - AIRFLOW__DATABASE__SQL_ALCHEMY_CONN=postgresql+psycopg2://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-p0stgres}@postgres:5432/${POSTGRES_DB:-aphrc}
+  #    - AIRFLOW__CELERY__RESULT_BACKEND=db+postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-p0stgres}@postgres:5432/${POSTGRES_DB:-aphrc}
+  #    - AIRFLOW__CELERY__BROKER_URL=redis://redis:6379/1
+  #    - AIRFLOW__CORE__EXECUTOR=CeleryExecutor
+  #    - AIRFLOW__CORE__LOAD_EXAMPLES=False
+  #    - AIRFLOW__WEBSERVER__SECRET_KEY=${AIRFLOW_SECRET_KEY:-your-secret-key}
+  #    - AIRFLOW__CORE__FERNET_KEY=${AIRFLOW_FERNET_KEY:-''}
+  #    - REDIS_HOST=redis
+  #    - REDIS_PORT=6379
+  #    - NEO4J_URI=bolt://neo4j:7687
+  #    - NEO4J_USER=${NEO4J_USER:-neo4j}
+  #    - NEO4J_PASSWORD=${NEO4J_PASSWORD:-password123456789!}
+  #    - WEBSITE_URL=${WEBSITE_URL:-https://aphrc.org}
+  #    - GEMINI_API_KEY=${GEMINI_API_KEY}
+  #  volumes:
+  #    - ./dags:/opt/airflow/dags
+  #    - ./logs/airflow:/opt/airflow/logs
+  #    - ./plugins:/opt/airflow/plugins
+  #    - ./src:/opt/airflow/src
+  #    - ./data:/opt/airflow/data
+  #  ports:
+  #    - "8080:8080"
+  #  networks:
+  #    - aphrc-network
+  #  healthcheck:
+  #    test: ["CMD", "curl", "--fail", "http://localhost:8080/health"]
+  #    interval: 50s
+  #    timeout: 10s
+  #    retries: 5
+  #    start_period: 100s
+  #  restart: unless-stopped
+
+  #airflow-scheduler:
+  #  build:
+  #    context: .
+  #    dockerfile: Dockerfile.airflow
+  #  user: "${AIRFLOW_UID:-50000}:0"
+  #  command: airflow scheduler
+  #  depends_on:
+  #    airflow-webserver:
+  #      condition: service_healthy
+  #  environment:
+  #    - AIRFLOW__DATABASE__SQL_ALCHEMY_CONN=postgresql+psycopg2://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-p0stgres}@postgres:5432/${POSTGRES_DB:-aphrc}
+  #    - AIRFLOW__CELERY__RESULT_BACKEND=db+postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-p0stgres}@postgres:5432/${POSTGRES_DB:-aphrc}
+  #    - AIRFLOW__CELERY__BROKER_URL=redis://redis:6379/1
+  #    - AIRFLOW__CORE__EXECUTOR=CeleryExecutor
+  #    - AIRFLOW__CORE__LOAD_EXAMPLES=False
+  #    - AIRFLOW__CORE__FERNET_KEY=${AIRFLOW_FERNET_KEY:-''}
+  #  volumes:
+  #    - ./dags:/opt/airflow/dags
+  #    - ./logs/airflow:/opt/airflow/logs
+  #    - ./plugins:/opt/airflow/plugins
+  #    - ./src:/opt/airflow/src
+  #    - ./data:/opt/airflow/data
+  #  networks:
+  #    - aphrc-network
+  #  restart: unless-stopped
+
+  #airflow-worker:
+  #  build:
+  #    context: .
+  #    dockerfile: Dockerfile.airflow
+  #  user: "${AIRFLOW_UID:-50000}:0"
+  #  command: airflow celery worker
+  #  depends_on:
+  #    airflow-webserver:
+  #      condition: service_healthy
+  #  environment:
+  #    - AIRFLOW__DATABASE__SQL_ALCHEMY_CONN=postgresql+psycopg2://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-p0stgres}@postgres:5432/${POSTGRES_DB:-aphrc}
+  #    - AIRFLOW__CELERY__RESULT_BACKEND=db+postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-p0stgres}@postgres:5432/${POSTGRES_DB:-aphrc}
+  #    - AIRFLOW__CELERY__BROKER_URL=redis://redis:6379/1
+  #    - AIRFLOW__CORE__EXECUTOR=CeleryExecutor
+  #    - AIRFLOW__CORE__LOAD_EXAMPLES=False
+  #    - AIRFLOW__CORE__FERNET_KEY=${AIRFLOW_FERNET_KEY:-''}
+  #  volumes:
+  #    - ./dags:/opt/airflow/dags
+  #    - ./logs/airflow:/opt/airflow/logs
+  #    - ./plugins:/opt/airflow/plugins
+  #    - ./src:/opt/airflow/src
+  #    - ./data:/opt/airflow/data
+  #  networks:
+  #    - aphrc-network
+  #  restart: unless-stopped
+
 networks:
   aphrc-network:
-    name: aphrc-network  # 
+    name: aphrc-network
     driver: bridge
 
 volumes:
   postgres-data:
   redis-data:
   neo4j-data:
+  #airflow-logs:

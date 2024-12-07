@@ -76,11 +76,18 @@
             closeModal: document.getElementById('close-modal')
         };
 
+        // Prediction state
+        let currentPrediction = '';
+        let userInput = '';
+        let predictionTimeout;
+        let lastPredictionQuery = '';
+        let lastSearchQuery = '';
+        let abortController;
+        const DEBOUNCE_DELAY = 150; // Reduced from 200ms to 150ms
+
         // Modal Functions
         function showSummaryModal(summary) {
-            console.log('Showing summary:', summary); // Debug log
             if (!summary) return;
-            
             elements.modalContent.textContent = summary;
             elements.modal.classList.remove('hidden');
             elements.modal.classList.add('flex');
@@ -90,6 +97,108 @@
             elements.modal.classList.add('hidden');
             elements.modal.classList.remove('flex');
             elements.modalContent.textContent = '';
+        }
+
+        // Prediction Functions
+        async function getPredictions(query) {
+            // Don't make a request if the query is the same as the last one
+            if (query === lastPredictionQuery) {
+                return [];
+            }
+            lastPredictionQuery = query;
+
+            // Cancel any ongoing prediction request
+            if (abortController) {
+                abortController.abort();
+            }
+            abortController = new AbortController();
+
+            try {
+                const response = await fetch(
+                    `${predictEndpoint}?partial_query=${encodeURIComponent(query)}&limit=5`,
+                    { signal: abortController.signal }
+                );
+                
+                if (!response.ok) {
+                    throw new Error(`Failed to get predictions: ${response.status}`);
+                }
+                
+                const predictions = await response.json();
+                return predictions || [];
+            } catch (error) {
+                if (error.name === 'AbortError') {
+                    return []; // Quietly handle aborted requests
+                }
+                console.error('Prediction error:', error);
+                return [];
+            }
+        }
+
+        function displayPrediction(prediction) {
+            if (!prediction) return;
+            
+            const input = elements.input;
+            const userText = input.value;
+            
+            if (prediction.toLowerCase().startsWith(userText.toLowerCase())) {
+                currentPrediction = prediction;
+                input.value = userText + prediction.slice(userText.length);
+                
+                // Select the predicted text
+                input.setSelectionRange(userText.length, prediction.length);
+            }
+        }
+
+        function handleInput(e) {
+            const input = e.target;
+            userInput = input.value.trim();
+
+            // Clear any existing timeout
+            if (predictionTimeout) {
+                clearTimeout(predictionTimeout);
+            }
+
+            // Reset prediction if backspace was pressed or input is too short
+            if (e.inputType === 'deleteContentBackward' || userInput.length < 2) {
+                currentPrediction = '';
+                return;
+            }
+
+            // Cache check - if we already have this prediction, use it immediately
+            if (currentPrediction && currentPrediction.toLowerCase().startsWith(userInput.toLowerCase())) {
+                displayPrediction(currentPrediction);
+                return;
+            }
+
+            // Set a new timeout for predictions with reduced delay
+            predictionTimeout = setTimeout(async () => {
+                if (userInput.length >= 2) {
+                    const predictions = await getPredictions(userInput);
+                    if (predictions && predictions.length > 0) {
+                        displayPrediction(predictions[0]);
+                    }
+                }
+            }, DEBOUNCE_DELAY);
+        }
+
+        // Handle special keys
+        function handleKeydown(e) {
+            if (currentPrediction) {
+                switch (e.key) {
+                    case 'ArrowRight':
+                    case 'Tab':
+                        if (elements.input.selectionStart < elements.input.value.length) {
+                            e.preventDefault();
+                            elements.input.setSelectionRange(elements.input.value.length, elements.input.value.length);
+                        }
+                        break;
+                    case 'Escape':
+                        e.preventDefault();
+                        elements.input.value = userInput;
+                        currentPrediction = '';
+                        break;
+                }
+            }
         }
 
         // Event Listeners
@@ -104,6 +213,11 @@
             }
         });
 
+        // Add input event listeners for predictions
+        elements.input.addEventListener('input', handleInput);
+        elements.input.addEventListener('keydown', handleKeydown);
+
+        // Display Results Function
         function displayResults(results) {
             elements.results.innerHTML = '';
             
@@ -120,7 +234,6 @@
                 const resultElement = document.createElement('div');
                 resultElement.className = 'bg-gray-800 rounded-lg p-6 border border-gray-700 mb-4';
                 
-                // Create the HTML structure
                 resultElement.innerHTML = `
                     <div class="flex flex-col gap-4">
                         <div class="flex justify-between items-start gap-4">
@@ -145,7 +258,6 @@
                     </div>
                 `;
 
-                // Add event listener for summary button if summary exists
                 if (result.summary) {
                     const summaryBtn = resultElement.querySelector('.summary-btn');
                     summaryBtn.addEventListener('click', () => {
@@ -162,32 +274,38 @@
             e.preventDefault();
             const query = elements.input.value.trim();
             
-            if (!query) return;
+            if (!query || query === lastSearchQuery) return;
+            lastSearchQuery = query;
 
             elements.predictions.classList.add('hidden');
             elements.loading.classList.remove('hidden');
             elements.error.classList.add('hidden');
             elements.results.innerHTML = '';
 
+            // Cancel any ongoing search request
+            if (abortController) {
+                abortController.abort();
+            }
+            abortController = new AbortController();
+
             try {
                 const response = await fetch(
-                    `${searchEndpoint}?query=${encodeURIComponent(query)}&limit=5`
+                    `${searchEndpoint}?query=${encodeURIComponent(query)}&limit=5`,
+                    { signal: abortController.signal }
                 );
                 if (!response.ok) throw new Error('Search failed');
                 const results = await response.json();
-                console.log('Search results:', results); // Debug log
                 displayResults(results);
             } catch (err) {
-                console.error('Search error:', err);
-                elements.error.textContent = 'Failed to perform search. Please try again.';
-                elements.error.classList.remove('hidden');
+                if (err.name !== 'AbortError') {
+                    console.error('Search error:', err);
+                    elements.error.textContent = 'Failed to perform search. Please try again.';
+                    elements.error.classList.remove('hidden');
+                }
             } finally {
                 elements.loading.classList.add('hidden');
             }
         });
-
-        // Add your existing prediction handling code here
-        // ... (rest of the prediction code remains the same)
     </script>
 </body>
 </html>

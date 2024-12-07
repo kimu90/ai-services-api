@@ -25,7 +25,8 @@ except Exception as e:
 @router.get("/predict")
 async def predict_queries(
     partial_query: str = Query(..., description="Partial query to get predictions for"),
-    limit: int = Query(5, description="Number of predictions to return")
+    limit: int = Query(5, description="Number of predictions to return"),
+    user_id: Optional[str] = None
 ):
     """Get query predictions based on partial input."""
     logger.info(f"Received prediction request for: {partial_query}")
@@ -33,42 +34,27 @@ async def predict_queries(
         if len(partial_query) < 2:
             return []
             
-        # Get predictions from database
-        db_predictions = db_manager.get_matching_queries(
-            partial_query=partial_query,
-            limit=limit
-        )
-        logger.info(f"DB predictions: {db_predictions}")
+        # Prepare context
+        context = {
+            'user_id': user_id
+        }
         
-        # Get predictions from search engine
-        search_predictions = []
-        try:
-            search_predictions = search_engine.predict_queries(
-                partial_query=partial_query,
-                limit=limit
+        # Get user's recent queries if available
+        if user_id:
+            context['user_queries'] = db_manager.get_user_queries(
+                user_id, 
+                limit=100
             )
-            logger.info(f"Search engine predictions: {search_predictions}")
-        except Exception as e:
-            logger.warning(f"Search engine predictions failed: {e}")
+            
+        # Get predictions
+        predictions = search_engine.predict_queries(
+            partial_query=partial_query,
+            limit=limit,
+            context=context
+        )
         
-        # Combine and deduplicate predictions
-        all_predictions = []
-        seen = set()
-        
-        # Add database predictions first
-        for pred in db_predictions:
-            if pred.lower() not in seen:
-                all_predictions.append(pred)
-                seen.add(pred.lower())
-                
-        # Add search predictions
-        for pred in search_predictions:
-            if pred.lower() not in seen and len(all_predictions) < limit:
-                all_predictions.append(pred)
-                seen.add(pred.lower())
-        
-        logger.info(f"Returning predictions: {all_predictions}")
-        return all_predictions[:limit]
+        logger.info(f"Returning predictions: {predictions}")
+        return predictions
         
     except Exception as e:
         logger.error(f"Prediction error: {str(e)}")

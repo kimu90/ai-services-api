@@ -46,6 +46,36 @@ def summarize(title: str, abstract: str) -> Optional[str]:
         logger.error(f"Error in summarization: {e}")
         return "Failed to generate summary"
 
+def categorize_expertise(expertise_list: List[str]) -> Optional[Dict[str, Any]]:
+    try:
+        if not expertise_list:
+            return None
+            
+        model = setup_gemini()
+        prompt = f"""
+        Given these areas of expertise: {', '.join(expertise_list)}
+        
+        Please categorize each expertise into academic domains, fields, and subfields.
+        Format the response as JSON with this structure:
+        {{
+            "categorized_expertise": [
+                {{
+                    "original_term": "original expertise term",
+                    "domain": "broader domain category",
+                    "field": "specific field",
+                    "subfield": "specific subfield if applicable, or null"
+                }}
+            ]
+        }}
+        
+        Be specific and consistent with academic categorization.
+        """
+        response = model.generate_content(prompt)
+        return json.loads(response.text)
+    except Exception as e:
+        logger.error(f"Error in expertise categorization: {e}")
+        return None
+
 def convert_inverted_index_to_text(inverted_index: Dict) -> str:
     if not inverted_index:
         return "N/A"
@@ -67,6 +97,35 @@ class DatabaseManager:
     def __init__(self):
         self.conn = get_db_connection()
         self.cur = self.conn.cursor()
+        self._create_tables()
+
+    def _create_tables(self):
+        try:
+            # Add expertise column to experts_ai if it doesn't exist
+            self.cur.execute("""
+                ALTER TABLE experts_ai
+                ADD COLUMN IF NOT EXISTS expertise TEXT[]
+            """)
+            
+            # Create expertise_categories table if it doesn't exist
+            self.cur.execute("""
+                CREATE TABLE IF NOT EXISTS expertise_categories (
+                    id SERIAL PRIMARY KEY,
+                    expert_orcid TEXT REFERENCES experts_ai(orcid),
+                    original_term TEXT,
+                    domain TEXT,
+                    field TEXT,
+                    subfield TEXT,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+            
+            self.conn.commit()
+            logger.info("Database tables initialized successfully")
+        except Exception as e:
+            self.conn.rollback()
+            logger.error(f"Error creating tables: {e}")
+            raise
 
     def add_tag(self, tag_name: str, tag_type: str = 'general') -> int:
         try:
@@ -130,23 +189,52 @@ class DatabaseManager:
             raise
 
     def add_expert(self, orcid: str, firstname: str, lastname: str, 
-                  domains: List[str], fields: List[str], subfields: List[str]) -> None:
+                  domains: List[str], fields: List[str], subfields: List[str],
+                  expertise: List[str] = None) -> None:
         try:
             self.cur.execute("""
-                INSERT INTO experts_ai (orcid, firstname, lastname, domains, fields, subfields)
-                VALUES (%s, %s, %s, %s, %s, %s)
+                INSERT INTO experts_ai 
+                (orcid, firstname, lastname, domains, fields, subfields, expertise)
+                VALUES (%s, %s, %s, %s, %s, %s, %s)
                 ON CONFLICT (orcid) DO UPDATE 
                 SET firstname = EXCLUDED.firstname,
                     lastname = EXCLUDED.lastname,
                     domains = EXCLUDED.domains,
                     fields = EXCLUDED.fields,
-                    subfields = EXCLUDED.subfields
-            """, (orcid, firstname, lastname, domains, fields, subfields))
+                    subfields = EXCLUDED.subfields,
+                    expertise = EXCLUDED.expertise
+            """, (orcid, firstname, lastname, domains, fields, subfields, expertise))
             self.conn.commit()
             logger.info(f"Expert {firstname} {lastname} added/updated successfully")
         except Exception as e:
             self.conn.rollback()
             logger.error(f"Error adding expert: {e}")
+            raise
+
+    def add_expertise_categories(self, expert_orcid: str, categorized_expertise: Dict[str, Any]) -> None:
+        try:
+            if not categorized_expertise or 'categorized_expertise' not in categorized_expertise:
+                return
+
+            for item in categorized_expertise['categorized_expertise']:
+                self.cur.execute("""
+                    INSERT INTO expertise_categories 
+                    (expert_orcid, original_term, domain, field, subfield)
+                    VALUES (%s, %s, %s, %s, %s)
+                    ON CONFLICT DO NOTHING
+                """, (
+                    expert_orcid,
+                    item['original_term'],
+                    item['domain'],
+                    item['field'],
+                    item.get('subfield')
+                ))
+            
+            self.conn.commit()
+            logger.info(f"Added expertise categories for expert {expert_orcid}")
+        except Exception as e:
+            self.conn.rollback()
+            logger.error(f"Error adding expertise categories: {e}")
             raise
 
     def link_publication_tag(self, doi: str, tag_id: int) -> None:
@@ -241,7 +329,6 @@ class OpenAlexProcessor:
 
             for i, work in enumerate(data['results']):
                 if i >= max_publications:
-                    logger.info(f"Reached limit of {max_publications} publications")
                     break
                 
                 success = self._process_single_work(work)
@@ -250,7 +337,6 @@ class OpenAlexProcessor:
                     logger.info(f"Processed {processed_count}/4 publications")
                 
                 if processed_count >= max_publications:
-                    logger.info(f"Successfully processed {max_publications} publications")
                     break
 
         except requests.RequestException as e:
@@ -342,6 +428,64 @@ class OpenAlexProcessor:
             logger.error(f"Error fetching data for {firstname} {lastname}: {e}")
         return '', ''
 
+    async def process_expertise_csv(self, csv_path: str):
+        try:
+            df = pd.read_csv(csv_path)
+            for _, row in df.iterrows():
+                expertise_str = row['Knowledge and Expertise']
+                if pd.isna(expertise_str):
+                    continue
+
+                # Clean and split expertise properly
+                expertise_list = [
+                    exp.strip() 
+                    for exp in expertise_str.split(',') 
+                    if exp and exp.strip()
+                ]
+
+                # Generate unique identifier from email
+                email = row.get('Contact Details', '')
+                expert_id = email.split('@')[0] if email else None
+
+                if expert_id and expertise_list:
+                    # Store expertise as array
+                    self.db.add_expert(
+                        orcid=expert_id,
+                        firstname=row['Firstname'],
+                        lastname=row['Lastname'],
+                        domains=[],
+                        fields=[],
+                        subfields=[],
+                        expertise=expertise_list  # This should now be clean
+                    )
+                    
+                    # Get categorized expertise using Gemini
+                    categorized = categorize_expertise(expertise_list)
+                    
+                    # Generate a unique identifier from email
+                    email = row.get('Contact Details', '')
+                    expert_id = email.split('@')[0] if email else None
+                    
+                    if expert_id and categorized:
+                        # Update expert record with expertise array
+                        self.db.add_expert(
+                            orcid=expert_id,
+                            firstname=row['Firstname'],
+                            lastname=row['Lastname'],
+                            domains=[],  # These will be populated from OpenAlex if available
+                            fields=[],
+                            subfields=[],
+                            expertise=expertise_list
+                        )
+                    
+                    # Add categorized expertise
+                    self.db.add_expertise_categories(expert_id, categorized)
+                    logger.info(f"Processed expertise for {row['Firstname']} {row['Lastname']}")
+
+        except Exception as e:
+            logger.error(f"Error processing expertise CSV: {e}")
+            raise
+
     async def process_experts(self, csv_path: str):
         try:
             df = pd.read_csv(csv_path)
@@ -360,13 +504,24 @@ class OpenAlexProcessor:
                         )
                         
                         if orcid:
+                            # Get existing expertise using the database manager
+                            cur = self.db.conn.cursor()
+                            cur.execute(
+                                "SELECT expertise FROM experts_ai WHERE orcid = %s",
+                                (orcid,)
+                            )
+                            result = cur.fetchone()
+                            existing_expertise = result[0] if result else []
+                            cur.close()
+
                             self.db.add_expert(
                                 orcid=orcid,
                                 firstname=firstname,
                                 lastname=lastname,
                                 domains=domains,
                                 fields=fields,
-                                subfields=subfields
+                                subfields=subfields,
+                                expertise=existing_expertise
                             )
                             logger.info(f"Successfully processed expert: {firstname} {lastname}")
                         else:
@@ -376,7 +531,7 @@ class OpenAlexProcessor:
 
         except Exception as e:
             logger.error(f"Error processing experts: {e}")
-            raise
+            raised
 
     def close(self):
         self.db.close()
@@ -384,7 +539,13 @@ class OpenAlexProcessor:
 async def main():
     processor = OpenAlexProcessor()
     try:
+        # Process works
         processor.process_works(max_publications=4)
+        
+        # Process expertise data first
+        await processor.process_expertise_csv("expertise.csv")
+        
+        # Then process OpenAlex data
         await processor.process_experts("sme.csv")
     except Exception as e:
         logger.error(f"Error in main process: {e}")

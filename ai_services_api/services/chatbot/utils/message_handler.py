@@ -1,5 +1,5 @@
 import logging
-from typing import AsyncIterable
+from typing import AsyncIterable, Optional, Dict
 from .llm_manager import GeminiLLMManager
 
 logger = logging.getLogger(__name__)
@@ -7,35 +7,45 @@ logger = logging.getLogger(__name__)
 class MessageHandler:
     def __init__(self, llm_manager: GeminiLLMManager):
         self.llm_manager = llm_manager
-
-    async def send_message_async(self, message: str) -> AsyncIterable[str]:
+        
+    async def send_message_async(
+        self, 
+        message: str,
+        conversation_id: Optional[str] = None,
+        context: Optional[Dict] = None
+    ) -> AsyncIterable[str]:
         """
         Sends the user message to the LLM and streams the response asynchronously.
         
-        :param message: The user input message
-        :return: Async generator that yields response tokens from the LLM
+        Args:
+            message: The user input message
+            conversation_id: Optional ID to track conversation history
+            context: Optional additional context
+            
+        Returns:
+            Async generator that yields response tokens from the LLM
         """
         try:
-            # Stream tokens from the LLM
             async for token in self.llm_manager.generate_async_response(message):
                 yield token
+                
         except Exception as e:
             logger.error(f"Error in send_message_async: {e}")
-            raise RuntimeError("Failed to generate response from the LLM.") from e
-
-    async def flush_conversation_cache(self, project_id: str):
+            error_message = "I apologize, but I encountered an error. Please try again."
+            yield error_message.encode("utf-8", errors="replace")
+    
+    async def flush_conversation_cache(self, conversation_id: str):
         """
-        Clears the conversation history stored in the memory for the given project ID.
+        Clears the conversation history stored in the memory.
         
-        :param project_id: The unique identifier for the project/conversation
+        Args:
+            conversation_id: The unique identifier for the conversation
         """
         try:
-            # Create or retrieve memory associated with the project ID
-            history = self.llm_manager.create_or_get_memory(project_id)
+            memory = self.llm_manager.create_memory()
+            memory.clear()
+            logger.info(f"Successfully flushed conversation cache for ID: {conversation_id}")
             
-            # Clear the conversation history from memory
-            history.clear()
-            logger.info(f"Successfully flushed conversation cache for project: {project_id}")
         except Exception as e:
-            logger.error(f"Error while flushing conversation cache for project {project_id}: {e}")
+            logger.error(f"Error while flushing conversation cache for ID {conversation_id}: {e}")
             raise RuntimeError("Failed to clear conversation history.") from e

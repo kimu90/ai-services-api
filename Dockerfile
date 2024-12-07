@@ -38,12 +38,21 @@ RUN apt-get update && apt-get install -y \
 RUN groupadd -g 1001 appgroup && \
    useradd -u 1000 -g appgroup -s /bin/bash -m appuser
 
+# Create all required directories including Airflow directories
 RUN mkdir -p \
   /code/ai_services_api/services/search/models \
   /code/logs \
-  /code/cache
+  /code/cache \
+  /opt/airflow/logs \
+  /opt/airflow/dags \
+  /opt/airflow/plugins \
+  /opt/airflow/data
 
-RUN chown -R appuser:appgroup /code
+# Set permissions for both app and airflow directories
+RUN chown -R appuser:appgroup /code && \
+    chown -R appuser:appgroup /opt/airflow && \
+    chmod -R 775 /code && \
+    chmod -R 775 /opt/airflow
 
 WORKDIR /code
 
@@ -52,10 +61,10 @@ COPY --from=builder /usr/local/bin /usr/local/bin
 
 COPY --chown=appuser:appgroup . .
 
-RUN chmod +x /code/init-script.sh
+RUN chmod +x /code/scripts/init-script.sh
 
 ENV TRANSFORMERS_CACHE=/code/cache \
-  HF_HOME=/code/cache
+    HF_HOME=/code/cache
 
 HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
   CMD curl -f http://localhost:8000/health || exit 1
