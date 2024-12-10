@@ -56,9 +56,9 @@ class ExpertSearchIndexManager:
             pipeline = self.redis_binary.pipeline()
             
             # Handle null values in metadata
-            for key, value in metadata.items():
+            for k, value in metadata.items():
                 if value is None:
-                    metadata[key] = ''
+                    metadata[k] = ''
             
             pipeline.hset(
                 f"expert:{key}",
@@ -100,19 +100,15 @@ class ExpertSearchIndexManager:
                             id,
                             firstname,
                             lastname,
-                            bio,
-                            email,
-                            knowledge_expertise,
-                            fields,
-                            subfields,
-                            domains,
-                            normalized_domains,
-                            normalized_fields,
-                            normalized_skills,
-                            keywords,
-                            orcid,
+                            designation,
+                            theme,
+                            unit,
                             contact_details,
-                            unit
+                            knowledge_expertise,
+                            orcid,
+                            domains,
+                            fields,
+                            subfields
                         FROM experts_expert
                         WHERE id IS NOT NULL
                     """)
@@ -124,21 +120,17 @@ class ExpertSearchIndexManager:
                             expert = {
                                 'id': row[0],
                                 'name': f"{row[1]} {row[2]}",
-                                'description': row[3] or '',
-                                'email': row[4],
+                                'designation': row[3] or '',
+                                'theme': row[4] or '',
+                                'unit': row[5] or '',
+                                'contact': row[6] or '',
                                 'specialties': {
-                                    'expertise': row[5] if isinstance(row[5], str) else [],
-                                    'fields': row[6] if isinstance(row[6], str) else [],
-                                    'subfields': row[7] if isinstance(row[7], str) else [],
-                                    'domains': row[8] if isinstance(row[8], str) else [],
-                                    'normalized_domains': row[9] if isinstance(row[9], str) else [],
-                                    'normalized_fields': row[10] if isinstance(row[10], str) else [],
-                                    'normalized_skills': row[11] if isinstance(row[11], str) else [],
-                                    'keywords': row[12] if isinstance(row[12], str) else []
+                                    'expertise': row[7] if isinstance(row[7], list) else json.loads(row[7]) if row[7] else [],
+                                    'domains': row[9] if row[9] else [],
+                                    'fields': row[10] if row[10] else [],
+                                    'subfields': row[11] if row[11] else []
                                 },
-                                'orcid': row[13],
-                                'contact': row[14],
-                                'unit': row[15]
+                                'orcid': row[8]
                             }
                             experts.append(expert)
                         except Exception as e:
@@ -162,16 +154,13 @@ class ExpertSearchIndexManager:
         specialties = expert['specialties']
         text_parts = [
             f"Name: {expert['name']}",
-            f"Description: {expert['description']}",
-            f"Unit: {expert['unit'] or ''}",
+            f"Designation: {expert['designation']}",
+            f"Theme: {expert['theme']}",
+            f"Unit: {expert['unit']}",
             f"Expertise: {' | '.join(specialties['expertise'])}",
-            f"Fields: {' | '.join(specialties['fields'])}",
-            f"Subfields: {' | '.join(specialties['subfields'])}",
             f"Domains: {' | '.join(specialties['domains'])}",
-            f"Technical Skills: {' | '.join(specialties['normalized_skills'])}",
-            f"Research Areas: {' | '.join(specialties['normalized_fields'])}",
-            f"Primary Domains: {' | '.join(specialties['normalized_domains'])}",
-            f"Keywords: {' | '.join(specialties['keywords'])}"
+            f"Fields: {' | '.join(specialties['fields'])}",
+            f"Subfields: {' | '.join(specialties['subfields'])}"
         ]
         return '\n'.join(text_parts)
 
@@ -203,7 +192,9 @@ class ExpertSearchIndexManager:
                     {
                         'id': expert['id'],
                         'name': expert['name'],
-                        'description': expert['description'],
+                        'designation': expert['designation'],
+                        'theme': expert['theme'],
+                        'unit': expert['unit'],
                         'specialties': expert['specialties']
                     }
                 )

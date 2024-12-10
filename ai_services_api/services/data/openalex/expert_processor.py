@@ -140,34 +140,22 @@ class ExpertProcessor:
                     session, firstname, lastname, openalex_id
                 )
                 
-                # Update database
+                # Update the database with the new data, using arrays for domains, fields, and subfields
                 self.db.execute("""
                     UPDATE experts_expert
                     SET orcid = COALESCE(NULLIF(%s, ''), orcid),
-                        domains = ARRAY(
-                            SELECT DISTINCT unnest(
-                                COALESCE(experts_expert.domains, '{}') || %s::text[]
-                            )
-                        ),
-                        fields = ARRAY(
-                            SELECT DISTINCT unnest(
-                                COALESCE(experts_expert.fields, '{}') || %s::text[]
-                            )
-                        ),
-                        subfields = ARRAY(
-                            SELECT DISTINCT unnest(
-                                COALESCE(experts_expert.subfields, '{}') || %s::text[]
-                            )
-                        )
+                        domains = COALESCE(domains, '{}'::TEXT[]) || %s::TEXT[],  -- Append new domains
+                        fields = COALESCE(fields, '{}'::TEXT[]) || %s::TEXT[],    -- Append new fields
+                        subfields = COALESCE(subfields, '{}'::TEXT[]) || %s::TEXT[]  -- Append new subfields
                     WHERE firstname = %s AND lastname = %s
                     RETURNING id
                 """, (
-                    orcid,
-                    domains,
-                    fields,
-                    subfields,
-                    firstname,
-                    lastname
+                    orcid,  # orcid to update
+                    domains,  # List of domains
+                    fields,  # List of fields
+                    subfields,  # List of subfields
+                    firstname,  # First name for the WHERE clause
+                    lastname  # Last name for the WHERE clause
                 ))
                 
                 logger.info(f"Updated OpenAlex data for {firstname} {lastname}")
@@ -175,7 +163,7 @@ class ExpertProcessor:
             else:
                 logger.warning(f"No OpenAlex ID found for {firstname} {lastname}")
                 return False
-                
+            
         except Exception as e:
             logger.error(f"Error updating expert fields for {firstname} {lastname}: {e}")
             return False

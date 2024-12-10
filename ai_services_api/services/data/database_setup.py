@@ -83,9 +83,9 @@ def fix_experts_table():
                 ('contact_details', 'VARCHAR(255)'),
                 ('knowledge_expertise', 'JSONB'),
                 ('orcid', 'VARCHAR(255)'),
-                ('domains', 'JSONB'),
-                ('fields', 'JSONB'),
-                ('subfields', 'JSONB')
+                ('domains', 'TEXT[]'),  # Changed to TEXT[] for list support
+                ('fields', 'TEXT[]'),   # Changed to TEXT[] for list support
+                ('subfields', 'TEXT[]') # Changed to TEXT[] for list support
             ]
             
             # Add normalized expertise columns
@@ -228,12 +228,13 @@ def create_tables():
                 contact_details VARCHAR(255),
                 knowledge_expertise JSONB,
                 orcid VARCHAR(255) UNIQUE,
-                domains JSONB,
-                fields JSONB,
-                subfields JSONB,
-                password VARCHAR(255) NOT NULL,
+                domains TEXT[],                -- Changed from JSONB to TEXT[] (array of text)
+                fields TEXT[],                 -- Changed from JSONB to TEXT[] (array of text)
+                subfields TEXT[],              -- Changed from JSONB to TEXT[] (array of text)
+                password VARCHAR(255) ,
                 UNIQUE (firstname, lastname)
             );
+
             CREATE TABLE IF NOT EXISTS resources_resource (
                 doi VARCHAR(255) PRIMARY KEY,
                 title TEXT NOT NULL,
@@ -294,22 +295,14 @@ def load_initial_experts(expertise_csv: str):
 
             cur.execute("""
                 INSERT INTO experts_expert (
-                    firstname, lastname, designation, theme, unit, contact_details, 
-                    knowledge_expertise, domains, fields, subfields, password
+                    firstname, lastname, designation, theme, unit, contact_details, knowledge_expertise
                 ) VALUES (
-                    %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
-                ) ON CONFLICT (firstname, lastname) DO UPDATE
-                SET designation = EXCLUDED.designation,
-                    theme = EXCLUDED.theme,
-                    unit = EXCLUDED.unit,
-                    contact_details = EXCLUDED.contact_details,
-                    knowledge_expertise = EXCLUDED.knowledge_expertise,
-                    password = EXCLUDED.password
+                    %s, %s, %s, %s, %s, %s, %s
+                )
                 RETURNING id
             """, (
                 firstname, lastname, designation, theme, unit, contact_details,
-                json.dumps(expertise_list), json.dumps([]), json.dumps([]), json.dumps([]),
-                fake_password
+                prepare_array_or_jsonb(expertise_list, column_types['knowledge_expertise'] == 'jsonb')
             ))
             conn.commit()
             logger.info(f"Added/updated expert data for {firstname} {lastname}")
