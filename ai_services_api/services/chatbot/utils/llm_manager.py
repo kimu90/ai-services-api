@@ -23,8 +23,8 @@ logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__name__)
 
 class QueryIntent(Enum):
-    PUBLICATION = "publication"
-    NAVIGATION = "navigation"
+    EXPERT = "expert"
+    FIELD = "field"
     GENERAL = "general"
 
 class GeminiLLMManager:
@@ -40,52 +40,77 @@ class GeminiLLMManager:
         self.max_context_items = 5
         self.context_expiry = 1800  # 30 minutes
         
-        # Initialize Redis connections
-        self.redis_text = redis.StrictRedis.from_url(
-            self.redis_url, 
-            decode_responses=True,
-            db=0
-        )
-        self.redis_binary = redis.StrictRedis.from_url(
-            self.redis_url, 
-            decode_responses=False,
-            db=0
-        )
+        # Initialize Redis connections with retry logic
+        self.setup_redis_connections()
         
         # Load embedding model
         self.embedding_model = SentenceTransformer('all-MiniLM-L6-v2')
         
-        # Initialize intent patterns with weights
+        # Initialize intent patterns
         self.intent_patterns = {
-            QueryIntent.PUBLICATION: {
+            QueryIntent.EXPERT: {
                 'patterns': [
-                    (r'publication', 1.0),
-                    (r'research', 0.8),
-                    (r'paper', 0.8),
-                    (r'report', 0.7),
-                    (r'study', 0.7),
-                    (r'document', 0.6),
-                    (r'pdf', 0.6),
-                    (r'read', 0.5),
-                    (r'download', 0.6)
+                    (r'expert', 1.0),
+                    (r'researcher', 0.9),
+                    (r'scientist', 0.9),
+                    (r'professional', 0.8),
+                    (r'specialist', 0.8),
+                    (r'knowledge', 0.7),
+                    (r'expertise', 0.7),
+                    (r'field', 0.6),
+                    (r'domain', 0.6),
+                    (r'research area', 0.8)
                 ],
                 'threshold': 0.7
             },
-            QueryIntent.NAVIGATION: {
+            QueryIntent.FIELD: {
                 'patterns': [
-                    (r'where', 0.8),
-                    (r'how to find', 1.0),
-                    (r'navigate', 1.0),
-                    (r'location', 0.8),
-                    (r'page', 0.6),
-                    (r'website', 0.7),
-                    (r'link', 0.6),
-                    (r'contact', 0.7),
-                    (r'menu', 0.6)
+                    (r'field', 1.0),
+                    (r'domain', 1.0),
+                    (r'specialty', 0.9),
+                    (r'subject', 0.8),
+                    (r'area', 0.8),
+                    (r'discipline', 0.8),
+                    (r'expertise', 0.7),
+                    (r'research', 0.7),
+                    (r'study', 0.6)
                 ],
                 'threshold': 0.6
             }
         }
+
+    def setup_redis_connections(self):
+        """Setup Redis connections with retry logic."""
+        max_retries = 5
+        retry_delay = 2
+
+        for attempt in range(max_retries):
+            try:
+                # Initialize Redis connections
+                self.redis_text = redis.StrictRedis.from_url(
+                    self.redis_url, 
+                    decode_responses=True,
+                    db=0
+                )
+                self.redis_binary = redis.StrictRedis.from_url(
+                    self.redis_url, 
+                    decode_responses=False,
+                    db=0
+                )
+                
+                # Test connections
+                self.redis_text.ping()
+                self.redis_binary.ping()
+                
+                logger.info("Redis connections established successfully")
+                return
+                
+            except redis.ConnectionError as e:
+                if attempt == max_retries - 1:
+                    logger.error("Failed to connect to Redis after maximum retries")
+                    raise
+                logger.warning(f"Redis connection attempt {attempt + 1} failed, retrying...")
+                time.sleep(retry_delay)
 
     def detect_follow_up(self, message: str) -> bool:
         """Detect if the message is a follow-up question."""
@@ -144,15 +169,14 @@ class GeminiLLMManager:
         
         max_intent = max(intent_scores.items(), key=lambda x: x[1])
         
-        if max_intent[1] >= self.intent_patterns[max_intent[0]]['threshold']:
+        if max_intent[1] >= self.intent_patterns[max_intent[0]].get('threshold', 0.6):
             return max_intent[0], max_intent[1]
         
         return QueryIntent.GENERAL, 0.0
 
     def get_vector_from_message(self, message: str) -> np.ndarray:
         """Convert a message to a vector using the embedding model."""
-        vector = self.embedding_model.encode(message)
-        return vector
+        return self.embedding_model.encode(message)
 
     def calculate_similarity(self, vec1: np.ndarray, vec2: np.ndarray) -> float:
         """Calculate cosine similarity between two vectors."""
@@ -164,32 +188,26 @@ class GeminiLLMManager:
             'is_valid': True,
             'warnings': [],
             'last_updated': None,
-            'source_type': None,
+            'source_type': 'expert',
             'reliability_score': 1.0
         }
         
-        if 'last_updated' in metadata:
+        if 'updated_at' in metadata:
             try:
-                last_updated = datetime.fromisoformat(metadata['last_updated'])
+                last_updated = datetime.fromisoformat(metadata['updated_at'])
                 age_days = (datetime.now() - last_updated).days
                 
                 if age_days > 365:
-                    validation_result['warnings'].append('Source is more than a year old')
+                    validation_result['warnings'].append('Expert data is more than a year old')
                     validation_result['reliability_score'] -= 0.2
                 
                 validation_result['last_updated'] = last_updated
-            except ValueError:
+            except (ValueError, TypeError):
                 validation_result['warnings'].append('Invalid date format')
         
-        if 'url' in metadata:
-            validation_result['source_type'] = 'web'
-            if not metadata['url'].startswith('https://aphrc.org'):
-                validation_result['is_valid'] = False
-                validation_result['warnings'].append('Non-APHRC source')
-        elif 'filename' in metadata:
-            validation_result['source_type'] = 'document'
-            if not metadata['filename'].endswith(('.pdf', '.doc', '.docx')):
-                validation_result['warnings'].append('Unsupported document format')
+        if not metadata.get('specialties', {}).get('expertise'):
+            validation_result['warnings'].append('No expertise data available')
+            validation_result['reliability_score'] -= 0.3
         
         return validation_result
 
@@ -212,26 +230,26 @@ class GeminiLLMManager:
             self.context_window.pop(0)
 
     def query_redis_data(self, query_vector: np.ndarray, intent: QueryIntent, top_n=3) -> List[Dict]:
-        """Query Redis for relevant data with confidence scoring."""
+        """Query Redis for relevant expert data with confidence scoring."""
         try:
             results = []
             
             # Define keys pattern based on intent
-            if intent == QueryIntent.PUBLICATION:
-                # Use the same patterns as used in RedisIndexManager
-                text_pattern = "text:publication:*"
-                emb_pattern = "emb:publication:*"
-                meta_pattern = "meta:publication:*"
-            elif intent == QueryIntent.NAVIGATION:
-                text_pattern = "web:text:*"
-                emb_pattern = "web:emb:*"
-                meta_pattern = "meta:web:*"
+            if intent == QueryIntent.EXPERT:
+                # Use patterns for expert-specific searches
+                text_pattern = "text:expert:*"
+                emb_pattern = "emb:expert:*"
+                meta_pattern = "meta:expert:*"
+            elif intent == QueryIntent.FIELD:
+                # Use patterns for field-specific searches
+                text_pattern = "text:expert:*"  # Still use expert pattern but will filter by fields
+                emb_pattern = "emb:expert:*"
+                meta_pattern = "meta:expert:*"
             else:
-                # For general queries, combine results from both types
-                return (
-                    self.query_redis_data(query_vector, QueryIntent.PUBLICATION, top_n=2) +
-                    self.query_redis_data(query_vector, QueryIntent.NAVIGATION, top_n=2)
-                )
+                # For general queries, search all expert data
+                text_pattern = "text:expert:*"
+                emb_pattern = "emb:expert:*"
+                meta_pattern = "meta:expert:*"
 
             emb_keys = self.redis_binary.keys(emb_pattern)
             
@@ -253,23 +271,79 @@ class GeminiLLMManager:
                         text = self.redis_text.get(text_key)
                         metadata = self.redis_text.hgetall(meta_key)
                         
-                        # Validate source
-                        validation = self.validate_source(metadata)
+                        # Parse JSON fields
+                        formatted_metadata = {
+                            'id': metadata.get('id'),
+                            'name': metadata.get('name'),
+                            'specialties': {
+                                'expertise': json.loads(metadata.get('expertise', '[]')),
+                                'fields': json.loads(metadata.get('fields', '[]')),
+                                'domains': json.loads(metadata.get('domains', '[]')),
+                                'normalized_skills': json.loads(metadata.get('normalized_skills', '[]'))
+                            },
+                            'unit': metadata.get('unit'),
+                            'updated_at': metadata.get('updated_at')
+                        }
+                        
+                        # Additional field-specific filtering for FIELD intent
+                        if intent == QueryIntent.FIELD:
+                            fields = formatted_metadata['specialties']['fields']
+                            domains = formatted_metadata['specialties']['domains']
+                            if not any(field.lower() in query_vector.lower() 
+                                     for field in fields + domains):
+                                continue
                         
                         results.append({
                             'similarity': similarity,
                             'text': text,
-                            'metadata': metadata,
-                            'validation': validation,
+                            'metadata': formatted_metadata,
+                            'validation': self.validate_source(formatted_metadata),
                             'key': base_key
                         })
 
-            results.sort(key=lambda x: x['similarity'] * x['validation']['reliability_score'], reverse=True)
+            results.sort(key=lambda x: x['similarity'] * x['validation']['reliability_score'], 
+                        reverse=True)
             return results[:top_n]
 
         except redis.RedisError as e:
             logger.error(f"Error accessing Redis: {e}")
             return []
+
+    def create_context(self, relevant_data: List[Dict]) -> str:
+        """Create context string from relevant expert data with improved formatting."""
+        context_parts = []
+        
+        for item in relevant_data:
+            text = item['text']
+            metadata = item['metadata']
+            validation = item['validation']
+            
+            # Format expert reference
+            expert_name = metadata.get('name', 'Unknown Expert')
+            unit = metadata.get('unit', '')
+            specialties = metadata.get('specialties', {})
+            
+            # Create a summary of expertise
+            expertise_summary = []
+            if specialties.get('expertise'):
+                expertise_summary.extend(specialties['expertise'][:3])
+            if specialties.get('fields'):
+                expertise_summary.extend(specialties['fields'][:2])
+            
+            expertise_text = ', '.join(expertise_summary) if expertise_summary else 'No specific expertise listed'
+            
+            # Add validation warnings if any
+            warnings = ""
+            if validation['warnings']:
+                warnings = f" (Note: {', '.join(validation['warnings'])})"
+            
+            context_parts.append(
+                f"Expert: {expert_name} ({unit})\n"
+                f"Expertise: {expertise_text}{warnings}\n"
+                f"Details: {text[:300]}..."
+            )
+            
+        return "\n\n".join(context_parts)
 
     def format_response(self, response: str) -> str:
         """Format the response maintaining HTML structure and beautifying links."""
@@ -283,51 +357,18 @@ class GeminiLLMManager:
             items = [item.strip() for item in items if item.strip()]
             cleaned = '<ul>' + ''.join([f'<li>{item}</li>' for item in items]) + '</ul>'
         
-        # Format URLs
-        url_pattern = r'https?://(?:www\.)?[-a-zA-Z0-9@:%._\+~#=]{1,256}\.[a-zA-Z0-9()]{1,6}\b(?:[-a-zA-Z0-9()@:%_\+.~#?&//=]*)'
+        # Format expert references
+        expert_pattern = r'Expert:\s+([^(]+)\s*\(([^)]+)\)'
+        cleaned = re.sub(expert_pattern, r'<strong>\1</strong> <em>(\2)</em>', cleaned)
         
-        def replace_url(match):
-            url = match.group(0)
-            display_url = url if len(url) <= 50 else url[:47] + '...'
-            
-            path_parts = url.split('/')
-            title = path_parts[-1] if path_parts[-1] else path_parts[-2]
-            title = title.replace('-', ' ').replace('_', ' ').title()
-            title = re.sub(r'\.(pdf|doc|docx|html|php|aspx)$', '', title)
-            title = re.sub(r'\?.*$', '', title)
-            
-            return f'<a href="{url}" class="inline-link" target="_blank">{title}</a>'
-        
-        cleaned = re.sub(url_pattern, replace_url, cleaned)
+        # Format expertise sections
+        expertise_pattern = r'Expertise:\s+([^(]+)'
+        cleaned = re.sub(expertise_pattern, r'<br>Expertise: <span class="expertise">\1</span>', cleaned)
         
         if not cleaned.startswith(('<ul>', '<p>', '<div')):
             cleaned = f'<p>{cleaned}</p>'
         
         return cleaned
-
-    def create_context(self, relevant_data: List[Dict]) -> str:
-        """Create context string from relevant data with improved formatting."""
-        context_parts = []
-        
-        for item in relevant_data:
-            text = item['text']
-            metadata = item['metadata']
-            validation = item['validation']
-            
-            # Format source reference
-            if metadata.get('filename'):
-                source_name = metadata['filename'].replace('-', ' ').replace('_', ' ').title()
-            else:
-                source_name = metadata.get('title', metadata.get('url', 'Unknown source'))
-            
-            # Add validation warnings if any
-            warnings = ""
-            if validation['warnings']:
-                warnings = f" (Note: {', '.join(validation['warnings'])})"
-            
-            context_parts.append(f"From '{source_name}'{warnings}: {text[:300]}...")
-            
-        return "\n\n".join(context_parts)
 
     async def generate_async_response(self, message: str) -> AsyncIterable[str]:
         """Generate async response with improved formatting and buffering."""
@@ -346,15 +387,17 @@ class GeminiLLMManager:
         context = self.create_context(relevant_data)
         self.manage_context_window({'text': context, 'query': message})
 
+        # Prepare system instruction based on intent
+        system_instruction = (
+            "I am an AI assistant specializing in providing information about APHRC experts and their work. "
+            f"The user's query appears to be related to {intent.value}. Based on our expert database:\n{context}"
+        )
+
         # Prepare messages
-        message_list = [
-            SystemMessage(content=os.getenv("SYSTEM_INSTRUCTION", 
-                "I am a bot that gives responses based on APHRC only and don't answer questions generally but rather in the context of aphrc.org.") + 
-                f" The user's intent appears to be related to {intent.value}. Here is the relevant context:\n{context}")
-        ]
+        message_list = [SystemMessage(content=system_instruction)]
 
         if history:
-            message_list += history
+            message_list.extend(history)
 
         message_list.append(HumanMessage(content=message))
         
@@ -362,7 +405,7 @@ class GeminiLLMManager:
             # Initialize response tracking
             response = ""
             buffer = ""
-            max_response_length = 500
+            max_response_length = 800  # Increased for expert responses
             sentence_end_chars = {'.', '!', '?'}
             
             async for token in model.astream(input=message_list):
@@ -387,7 +430,6 @@ class GeminiLLMManager:
                         break
                         
                     yield formatted_chunk.encode("utf-8", errors="replace")
-                    
                     buffer = ""
             
             # Yield any remaining content in buffer
@@ -397,20 +439,38 @@ class GeminiLLMManager:
                 
         except Exception as e:
             logger.error(f"Error generating response: {e}")
-            error_message = self.format_response("I apologize, but I encountered an error. Please try again.")
+            error_message = self.format_response(
+                "I apologize, but I encountered an error while retrieving expert information. Please try rephrasing your question."
+            )
             yield error_message.encode("utf-8", errors="replace")
 
     def get_gemini_model(self):
         """Initialize and return the Gemini model."""
-        model = ChatGoogleGenerativeAI(
+        return ChatGoogleGenerativeAI(
             google_api_key=self.api_key,
             stream=True,
             model="gemini-pro",
             convert_system_message_to_human=True,
             callbacks=[self.callback],
+            temperature=0.7,
+            top_p=0.9,
+            top_k=40,
         )
-        return model
 
     def create_memory(self):
         """Create conversation memory."""
-        return ConversationBufferWindowMemory(max_token_limit=4000)
+        return ConversationBufferWindowMemory(
+            k=5,
+            max_token_limit=4000,
+            return_messages=True
+        )
+
+    def __del__(self):
+        """Cleanup when the instance is deleted."""
+        try:
+            if hasattr(self, 'redis_text'):
+                self.redis_text.close()
+            if hasattr(self, 'redis_binary'):
+                self.redis_binary.close()
+        except:
+            pass

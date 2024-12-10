@@ -125,73 +125,7 @@ class ExpertProcessor:
             logger.error(f"Error fetching data for {firstname} {lastname}: {e}")
         return '', ''
 
-    async def process_expertise_csv(self, csv_path: str):
-        """Process expertise CSV file."""
-        try:
-            df = pd.read_csv(csv_path)
-            for _, row in df.iterrows():
-                try:
-                    expertise_str = row['Knowledge and Expertise']
-                    if pd.isna(expertise_str):
-                        continue
-
-                    # Clean and split expertise
-                    expertise_list = [exp.strip() for exp in expertise_str.split(',') if exp.strip()]
-                    
-                    # Insert with proper handling of existing data
-                    self.db.execute("""
-                        INSERT INTO experts_expert (
-                            firstname, lastname, knowledge_expertise, domains, fields, subfields
-                        ) VALUES (
-                            %s, %s, %s, %s, %s, %s
-                        ) ON CONFLICT (firstname, lastname) DO UPDATE
-                        SET knowledge_expertise = 
-                            ARRAY(
-                                SELECT DISTINCT unnest(
-                                    COALESCE(experts_expert.knowledge_expertise, '{}') || 
-                                    COALESCE(EXCLUDED.knowledge_expertise, '{}')
-                                )
-                            ),
-                        domains = 
-                            ARRAY(
-                                SELECT DISTINCT unnest(
-                                    COALESCE(experts_expert.domains, '{}') || 
-                                    COALESCE(EXCLUDED.domains, '{}')
-                                )
-                            ),
-                        fields = 
-                            ARRAY(
-                                SELECT DISTINCT unnest(
-                                    COALESCE(experts_expert.fields, '{}') || 
-                                    COALESCE(EXCLUDED.fields, '{}')
-                                )
-                            ),
-                        subfields = 
-                            ARRAY(
-                                SELECT DISTINCT unnest(
-                                    COALESCE(experts_expert.subfields, '{}') || 
-                                    COALESCE(EXCLUDED.subfields, '{}')
-                                )
-                            )
-                        RETURNING id
-                    """, (
-                        row['Firstname'],
-                        row['Lastname'],
-                        expertise_list,
-                        [],  # Empty domains
-                        [],  # Empty fields
-                        []   # Empty subfields
-                    ))
-                    
-                    logger.info(f"Added/updated expert data for {row['Firstname']} {row['Lastname']}")
-
-                except Exception as e:
-                    logger.error(f"Error processing row for {row.get('Firstname', 'Unknown')} {row.get('Lastname', 'Unknown')}: {e}")
-                    continue
-
-        except Exception as e:
-            logger.error(f"Error processing expertise CSV: {e}")
-            raise
+    
 
     async def update_expert_fields(self, session: aiohttp.ClientSession, 
                                  firstname: str, lastname: str) -> bool:

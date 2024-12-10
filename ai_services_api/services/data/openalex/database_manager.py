@@ -17,16 +17,28 @@ class DatabaseManager:
         self.conn = get_db_connection()
         self.cur = self.conn.cursor()
 
-    def execute(self, query: str, params: tuple = None) -> List[Tuple[Any, ...]]:
-        """Execute a query and return results if any."""
+    def execute(self, query: str, params: tuple = None) -> Any:
+        """
+        Execute a query and optionally return results if available.
+
+        Args:
+            query (str): The SQL query to execute.
+            params (tuple, optional): Parameters to include in the query.
+
+        Returns:
+            Any: If the query returns results (e.g., SELECT), a list of tuples is returned.
+                 Otherwise, None is returned for queries like INSERT, UPDATE, DELETE.
+        """
         try:
             self.cur.execute(query, params)
             self.conn.commit()
-            if self.cur.description:  # If the query returns results
-                return self.cur.fetchall()
-            return []
+
+            if self.cur.description:  # Checks if the query returns results
+                return self.cur.fetchall()  # Return results for SELECT queries
+            return None  # Return None for non-SELECT queries
+
         except Exception as e:
-            self.conn.rollback()
+            self.conn.rollback()  # Rollback the transaction on error
             logger.error(f"Query execution failed: {str(e)}\nQuery: {query}\nParams: {params}")
             raise
 
@@ -75,18 +87,32 @@ class DatabaseManager:
     def add_publication(self, doi: str, title: str, abstract: str, summary: str) -> None:
         """Add or update a publication in the database."""
         try:
-            self.execute("""
-                INSERT INTO resources_resource (doi, title, abstract, summary)
-                VALUES (%s, %s, %s, %s)
-                ON CONFLICT (doi) DO UPDATE 
-                SET title = EXCLUDED.title,
-                    abstract = EXCLUDED.abstract,
-                    summary = EXCLUDED.summary
-            """, (doi, title, abstract, summary))
-            logger.info(f"Added/updated publication: {title}")
+            # Check if the publication already exists
+            existing_publication = self.execute("""
+                SELECT doi FROM resources_resource WHERE doi = %s
+            """, (doi,))
+
+            if existing_publication:  # If publication exists
+                # Update the existing publication
+                self.execute("""
+                    UPDATE resources_resource
+                    SET title = %s,
+                        abstract = %s,
+                        summary = %s
+                    WHERE doi = %s
+                """, (title, abstract, summary, doi))
+                logger.info(f"Updated publication: {title}")
+            else:
+                # Insert a new publication
+                self.execute("""
+                    INSERT INTO resources_resource (doi, title, abstract, summary)
+                    VALUES (%s, %s, %s, %s)
+                """, (doi, title, abstract, summary))
+                logger.info(f"Added publication: {title}")
         except Exception as e:
-            logger.error(f"Error adding publication: {e}")
+            logger.error(f"Error adding/updating publication: {e}")
             raise
+
 
     def update_expert(self, expert_id: str, updates: Dict[str, Any]) -> None:
         """Update expert information."""

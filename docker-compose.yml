@@ -28,12 +28,17 @@ services:
       - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-p0stgres}
       - NEO4J_USER=${NEO4J_USER:-neo4j}
       - NEO4J_PASSWORD=${NEO4J_PASSWORD:-password123456789!}
-      - DATABASE_URL=postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+      - DATABASE_URL=postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@167.86.85.127:5432/${POSTGRES_DB}
       - DOCKER_ENV=true
       - TRANSFORMERS_CACHE=/code/cache
       - HF_HOME=/code/cache
       - MODEL_PATH=/code/models/search
       - BASE_DIR=/code
+      - SKIP_OPENALEX=${SKIP_OPENALEX:-false}
+      - SKIP_PUBLICATIONS=${SKIP_PUBLICATIONS:-false}
+      - SKIP_GRAPH=${SKIP_GRAPH:-false}
+      - SKIP_SEARCH=${SKIP_SEARCH:-false}
+      - SKIP_REDIS=${SKIP_REDIS:-false}
     user: "${UID:-1000}:${GID:-1001}"
     depends_on:
       redis:

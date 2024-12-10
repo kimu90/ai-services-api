@@ -8,6 +8,7 @@ import time
 import logging
 from pathlib import Path
 from sentence_transformers import SentenceTransformer
+from typing import List, Dict, Any, Optional
 from src.utils.db_utils import DatabaseConnector
 
 # Set up logging
@@ -18,9 +19,9 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-class SearchIndexManager:
+class ExpertSearchIndexManager:
     def __init__(self):
-        """Initialize SearchIndexManager."""
+        """Initialize ExpertSearchIndexManager."""
         self.setup_paths()
         self.setup_redis()
         self.model = SentenceTransformer(os.getenv('EMBEDDING_MODEL', 'all-MiniLM-L6-v2'))
@@ -31,8 +32,8 @@ class SearchIndexManager:
         current_dir = Path(os.path.dirname(os.path.abspath(__file__)))
         self.models_dir = current_dir / 'models'
         self.models_dir.mkdir(parents=True, exist_ok=True)
-        self.index_path = self.models_dir / 'faiss_index.idx'
-        self.mapping_path = self.models_dir / 'chunk_mapping.pkl'
+        self.index_path = self.models_dir / 'expert_faiss_index.idx'
+        self.mapping_path = self.models_dir / 'expert_mapping.pkl'
 
     def setup_redis(self):
         """Setup Redis connections."""
@@ -50,11 +51,17 @@ class SearchIndexManager:
         )
 
     def store_in_redis(self, key: str, embedding: np.ndarray, metadata: dict):
-        """Store embedding and metadata in Redis."""
+        """Store expert embedding and metadata in Redis."""
         try:
             pipeline = self.redis_binary.pipeline()
+            
+            # Handle null values in metadata
+            for key, value in metadata.items():
+                if value is None:
+                    metadata[key] = ''
+            
             pipeline.hset(
-                f"emb:{key}",
+                f"expert:{key}",
                 mapping={
                     'vector': embedding.tobytes(),
                     'metadata': json.dumps(metadata)
@@ -62,66 +69,82 @@ class SearchIndexManager:
             )
             pipeline.execute()
         except Exception as e:
-            logger.error(f"Error storing in Redis: {e}")
+            logger.error(f"Error storing expert in Redis: {e}")
 
-    def fetch_resources_and_experts(self):
-        """Fetch resources and experts with retry logic."""
+    def fetch_experts(self) -> List[Dict[str, Any]]:
+        """Fetch all experts with retry logic."""
         max_retries = 3
         retry_delay = 5
-        
+
         for attempt in range(max_retries):
             try:
                 conn = self.db.get_connection()
                 with conn.cursor() as cur:
-                    # First check if table exists
+                    # Check if table exists
                     cur.execute("""
                         SELECT EXISTS (
                             SELECT FROM information_schema.tables 
-                            WHERE table_name = 'resources_resource'
+                            WHERE table_name = 'experts_expert'
                         );
                     """)
                     if not cur.fetchone()[0]:
-                        logger.warning("resources_resource table does not exist yet")
+                        logger.warning("experts_expert table does not exist")
                         if attempt < max_retries - 1:
                             time.sleep(retry_delay)
                             continue
                         return []
                     
-                    # If table exists, fetch data
+                    # Fetch expert data
                     cur.execute("""
                         SELECT 
-                            r.doi,
-                            r.title,
-                            r.abstract,
-                            r.summary,
-                            r.authors,
-                            r.description,
-                            e.firstname,
-                            e.lastname,
-                            e.knowledge_expertise,
-                            e.fields,
-                            e.subfields,
-                            e.domains
-                        FROM resources_resource r
-                        LEFT JOIN experts_expert e ON e.id = r.expert_id
-                        WHERE r.doi IS NOT NULL 
-                        AND r.title IS NOT NULL
+                            id,
+                            firstname,
+                            lastname,
+                            bio,
+                            email,
+                            knowledge_expertise,
+                            fields,
+                            subfields,
+                            domains,
+                            normalized_domains,
+                            normalized_fields,
+                            normalized_skills,
+                            keywords,
+                            orcid,
+                            contact_details,
+                            unit
+                        FROM experts_expert
+                        WHERE id IS NOT NULL
                     """)
                     rows = cur.fetchall()
                     
-                    return [{
-                        'doi': row[0],
-                        'title': row[1],
-                        'abstract': row[2],
-                        'summary': row[3],
-                        'authors': row[4],
-                        'description': row[5],
-                        'expert_name': f"{row[6]} {row[7]}" if row[6] and row[7] else None,
-                        'knowledge_expertise': row[8] if row[8] else [],
-                        'fields': row[9] if row[9] else [],
-                        'subfields': row[10] if row[10] else [],
-                        'domains': row[11] if row[11] else []
-                    } for row in rows]
+                    experts = []
+                    for row in rows:
+                        try:
+                            expert = {
+                                'id': row[0],
+                                'name': f"{row[1]} {row[2]}",
+                                'description': row[3] or '',
+                                'email': row[4],
+                                'specialties': {
+                                    'expertise': row[5] if isinstance(row[5], str) else [],
+                                    'fields': row[6] if isinstance(row[6], str) else [],
+                                    'subfields': row[7] if isinstance(row[7], str) else [],
+                                    'domains': row[8] if isinstance(row[8], str) else [],
+                                    'normalized_domains': row[9] if isinstance(row[9], str) else [],
+                                    'normalized_fields': row[10] if isinstance(row[10], str) else [],
+                                    'normalized_skills': row[11] if isinstance(row[11], str) else [],
+                                    'keywords': row[12] if isinstance(row[12], str) else []
+                                },
+                                'orcid': row[13],
+                                'contact': row[14],
+                                'unit': row[15]
+                            }
+                            experts.append(expert)
+                        except Exception as e:
+                            logger.error(f"Error processing expert data: {e}")
+                    
+                    return experts
                     
             except Exception as e:
                 logger.error(f"Attempt {attempt + 1}/{max_retries} failed: {e}")
@@ -134,48 +157,54 @@ class SearchIndexManager:
                 if 'conn' in locals():
                     conn.close()
 
-    def create_faiss_index(self):
-        """Create FAISS index."""
+    def create_expert_text(self, expert: Dict[str, Any]) -> str:
+        """Create searchable text from expert data."""
+        specialties = expert['specialties']
+        text_parts = [
+            f"Name: {expert['name']}",
+            f"Description: {expert['description']}",
+            f"Unit: {expert['unit'] or ''}",
+            f"Expertise: {' | '.join(specialties['expertise'])}",
+            f"Fields: {' | '.join(specialties['fields'])}",
+            f"Subfields: {' | '.join(specialties['subfields'])}",
+            f"Domains: {' | '.join(specialties['domains'])}",
+            f"Technical Skills: {' | '.join(specialties['normalized_skills'])}",
+            f"Research Areas: {' | '.join(specialties['normalized_fields'])}",
+            f"Primary Domains: {' | '.join(specialties['normalized_domains'])}",
+            f"Keywords: {' | '.join(specialties['keywords'])}"
+        ]
+        return '\n'.join(text_parts)
+
+    def create_faiss_index(self) -> bool:
+        """Create FAISS index for expert search."""
         try:
-            data = self.fetch_resources_and_experts()
-            if not data:
-                logger.warning("No data available to create index")
+            # Fetch expert data
+            experts = self.fetch_experts()
+            if not experts:
+                logger.warning("No expert data available to create index")
                 return False
 
             # Prepare text for embeddings
-            texts = [
-                f"""Title: {item['title']}
-                Abstract: {item['abstract'] or ''}
-                Summary: {item['summary'] or ''}
-                Description: {item['description'] or ''}
-                Authors: {item['authors'] or ''}
-                Expert: {item['expert_name'] or ''}
-                Expertise: {' | '.join(item['knowledge_expertise'])}
-                Fields: {' | '.join(item['fields'])}
-                Subfields: {' | '.join(item['subfields'])}
-                Domains: {' | '.join(item['domains'])}"""
-                for item in data
-            ]
+            texts = [self.create_expert_text(expert) for expert in experts]
 
             # Generate embeddings
             embeddings = self.model.encode(texts, convert_to_numpy=True, show_progress_bar=True)
             
-            # Store in Redis and create FAISS index
+            # Create and populate FAISS index
             dimension = embeddings.shape[1]
             index = faiss.IndexFlatL2(dimension)
             
-            for i, (item, embedding) in enumerate(zip(data, embeddings)):
+            # Store embeddings and metadata
+            for i, (expert, embedding) in enumerate(zip(experts, embeddings)):
                 # Store in Redis
                 self.store_in_redis(
-                    f"res:{item['doi']}",
+                    str(expert['id']),
                     embedding,
                     {
-                        'doi': item['doi'],
-                        'title': item['title'],
-                        'authors': item['authors'],
-                        'expert_name': item['expert_name'],
-                        'fields': item['fields'],
-                        'domains': item['domains']
+                        'id': expert['id'],
+                        'name': expert['name'],
+                        'description': expert['description'],
+                        'specialties': expert['specialties']
                     }
                 )
                 
@@ -185,22 +214,66 @@ class SearchIndexManager:
             # Save FAISS index and mapping
             faiss.write_index(index, str(self.index_path))
             with open(self.mapping_path, 'wb') as f:
-                pickle.dump({i: item['doi'] for i, item in enumerate(data)}, f)
+                pickle.dump({i: expert['id'] for i, expert in enumerate(experts)}, f)
 
+            logger.info(f"Successfully created index with {len(experts)} experts")
             return True
 
         except Exception as e:
             logger.error(f"Error creating FAISS index: {e}")
             return False
 
-def initialize_search():
-    """Initialize search index."""
+    def search_experts(self, query: str, k: int = 5) -> List[Dict[str, Any]]:
+        """
+        Search for similar experts using the index.
+        
+        Args:
+            query (str): Search query
+            k (int): Number of results to return
+            
+        Returns:
+            List of expert matches with metadata
+        """
+        try:
+            # Load index and mapping
+            index = faiss.read_index(str(self.index_path))
+            with open(self.mapping_path, 'rb') as f:
+                id_mapping = pickle.load(f)
+
+            # Generate query embedding
+            query_embedding = self.model.encode([query], convert_to_numpy=True)
+            
+            # Search index
+            distances, indices = index.search(query_embedding.astype(np.float32), k)
+            
+            # Fetch results from Redis
+            results = []
+            for i, idx in enumerate(indices[0]):
+                if idx < 0:  # FAISS may return -1 for not enough matches
+                    continue
+                    
+                expert_id = id_mapping[idx]
+                expert_data = self.redis_binary.hgetall(f"expert:{expert_id}")
+                
+                if expert_data:
+                    metadata = json.loads(expert_data[b'metadata'].decode())
+                    metadata['score'] = float(1 / (1 + distances[0][i]))  # Convert distance to similarity score
+                    results.append(metadata)
+            
+            return results
+
+        except Exception as e:
+            logger.error(f"Error searching experts: {e}")
+            return []
+
+def initialize_expert_search():
+    """Initialize expert search index."""
     try:
-        manager = SearchIndexManager()
+        manager = ExpertSearchIndexManager()
         return manager.create_faiss_index()
     except Exception as e:
-        logger.error(f"Error initializing search: {e}")
+        logger.error(f"Error initializing expert search: {e}")
         return False
 
 if __name__ == "__main__":
-    initialize_search()
+    initialize_expert_search()

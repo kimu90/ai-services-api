@@ -4,7 +4,7 @@ import argparse
 import asyncio
 from dotenv import load_dotenv
 from ai_services_api.services.data.database_setup import (
-    create_database_if_not_exists, 
+    create_database_if_not_exists,
     create_tables,
     fix_experts_table,
     get_db_connection
@@ -13,8 +13,8 @@ from ai_services_api.services.data.openalex.openalex_processor import OpenAlexPr
 from ai_services_api.services.data.openalex.publication_processor import PublicationProcessor
 from ai_services_api.services.data.openalex.ai_summarizer import TextSummarizer
 from ai_services_api.services.recommendation.graph_initializer import GraphDatabaseInitializer
-from ai_services_api.services.search.index_creator import SearchIndexManager
-from ai_services_api.services.search.redis_index_manager import RedisIndexManager
+from ai_services_api.services.search.index_creator import ExpertSearchIndexManager
+from ai_services_api.services.search.redis_index_manager import ExpertRedisIndexManager
 
 logging.basicConfig(
     level=logging.INFO,
@@ -47,11 +47,11 @@ def initialize_database(args):
         logger.info("Ensuring database exists...")
         create_database_if_not_exists()
         
-        logger.info("Creating database tables...")
-        create_tables()
-        
         logger.info("Fixing experts table...")
         fix_experts_table()
+        
+        logger.info("Creating database tables...")
+        create_tables()
         
         logger.info("Database initialization complete!")
         
@@ -101,7 +101,7 @@ async def process_data(args):
 
 def create_search_index():
     """Create FAISS search index."""
-    index_creator = SearchIndexManager()
+    index_creator = ExpertSearchIndexManager()
     try:
         logger.info("Creating FAISS search index...")
         success = index_creator.create_faiss_index()
@@ -117,7 +117,7 @@ def create_search_index():
 
 def create_redis_index():
     """Create Redis search index."""
-    redis_creator = RedisIndexManager()
+    redis_creator = ExpertRedisIndexManager()
     try:
         logger.info("Creating Redis search index...")
         if redis_creator.clear_redis_indexes():
@@ -213,3 +213,6 @@ def run():
 if __name__ == "__main__":
     import sys
     run()
+
+
+    

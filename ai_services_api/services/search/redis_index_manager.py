@@ -7,6 +7,7 @@ from dotenv import load_dotenv
 from ai_services_api.services.data.database_setup import get_db_connection
 import os
 import time
+import json
 
 logging.basicConfig(
     level=logging.INFO,
@@ -15,18 +16,18 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-class RedisIndexManager:
+class ExpertRedisIndexManager:
     def __init__(self):
-        """Initialize Redis index manager."""
+        """Initialize Redis index manager for experts."""
         try:
             load_dotenv()
             self.embedding_model = SentenceTransformer(
                 os.getenv('EMBEDDING_MODEL', 'all-MiniLM-L6-v2')
             )
             self.setup_redis_connections()
-            logger.info("RedisIndexManager initialized successfully")
+            logger.info("ExpertRedisIndexManager initialized successfully")
         except Exception as e:
-            logger.error(f"Error initializing RedisIndexManager: {e}")
+            logger.error(f"Error initializing ExpertRedisIndexManager: {e}")
             raise
 
     def setup_redis_connections(self):
@@ -64,8 +65,8 @@ class RedisIndexManager:
                 logger.warning(f"Redis connection attempt {attempt + 1} failed, retrying...")
                 time.sleep(retry_delay)
 
-    def fetch_resources_and_experts(self) -> List[Dict[str, Any]]:
-        """Fetch resources and associated expert data."""
+    def fetch_experts(self) -> List[Dict[str, Any]]:
+        """Fetch all expert data."""
         max_retries = 3
         retry_delay = 2
         
@@ -76,53 +77,69 @@ class RedisIndexManager:
                 conn = get_db_connection()
                 cur = conn.cursor()
                 
-                # First check if table exists
+                # Check if table exists
                 cur.execute("""
                     SELECT EXISTS (
                         SELECT FROM information_schema.tables 
-                        WHERE table_name = 'resources_resource'
+                        WHERE table_name = 'experts_expert'
                     );
                 """)
                 if not cur.fetchone()[0]:
-                    logger.warning("resources_resource table does not exist yet")
+                    logger.warning("experts_expert table does not exist yet")
                     return []
                 
+                # Fetch all expert data
                 cur.execute("""
                     SELECT 
-                        r.doi,
-                        r.title,
-                        r.abstract,
-                        r.summary,
-                        r.authors,
-                        r.description,
-                        e.firstname,
-                        e.lastname,
-                        e.knowledge_expertise,
-                        e.fields,
-                        e.subfields,
-                        e.domains
-                    FROM resources_resource r
-                    LEFT JOIN experts_expert e ON e.id = r.expert_id
-                    WHERE r.doi IS NOT NULL 
-                    AND r.title IS NOT NULL
+                        id,
+                        email,
+                        knowledge_expertise,
+                        is_active,
+                        is_staff,
+                        created_at,
+                        updated_at,
+                        bio,
+                        orcid,
+                        fields,
+                        subfields,
+                        domains,
+                        firstname,
+                        lastname,
+                        contact_details,
+                        unit,
+                        normalized_domains,
+                        normalized_fields,
+                        normalized_skills,
+                        keywords
+                    FROM experts_expert
+                    WHERE id IS NOT NULL
                 """)
                 
-                resources = [{
-                    'doi': row[0],
-                    'title': row[1],
-                    'abstract': row[2] or '',
-                    'summary': row[3] or '',
-                    'authors': row[4] if row[4] else [],
-                    'description': row[5] or '',
-                    'expert_name': f"{row[6]} {row[7]}" if row[6] and row[7] else None,
-                    'knowledge_expertise': row[8] if row[8] else [],
+                experts = [{
+                    'id': row[0],
+                    'email': row[1],
+                    'knowledge_expertise': row[2] if row[2] else [],
+                    'is_active': row[3],
+                    'is_staff': row[4],
+                    'created_at': row[5].isoformat() if row[5] else None,
+                    'updated_at': row[6].isoformat() if row[6] else None,
+                    'bio': row[7] or '',
+                    'orcid': row[8],
                     'fields': row[9] if row[9] else [],
                     'subfields': row[10] if row[10] else [],
-                    'domains': row[11] if row[11] else []
+                    'domains': row[11] if row[11] else [],
+                    'firstname': row[12] or '',
+                    'lastname': row[13] or '',
+                    'contact_details': row[14],
+                    'unit': row[15] or '',
+                    'normalized_domains': row[16] if row[16] else [],
+                    'normalized_fields': row[17] if row[17] else [],
+                    'normalized_skills': row[18] if row[18] else [],
+                    'keywords': row[19] if row[19] else []
                 } for row in cur.fetchall()]
                 
-                logger.info(f"Fetched {len(resources)} resources from database")
-                return resources
+                logger.info(f"Fetched {len(experts)} experts from database")
+                return experts
                 
             except Exception as e:
                 logger.error(f"Attempt {attempt + 1}/{max_retries} failed: {e}")
@@ -138,68 +155,63 @@ class RedisIndexManager:
                     conn.close()
 
     def create_redis_index(self) -> bool:
-        """Create Redis indexes for resources."""
+        """Create Redis indexes for experts."""
         try:
-            logger.info("Creating Redis indexes...")
-            resources = self.fetch_resources_and_experts()
+            logger.info("Creating Redis indexes for experts...")
+            experts = self.fetch_experts()
             
-            if not resources:
-                logger.warning("No resources found to index")
+            if not experts:
+                logger.warning("No experts found to index")
                 return False
             
-            for resource in resources:
+            for expert in experts:
                 try:
                     # Create combined text for embedding
-                    text_content = self._create_text_content(resource)
+                    text_content = self._create_text_content(expert)
                     
                     # Generate embedding
                     embedding = self.embedding_model.encode(text_content)
                     
                     # Store in Redis
-                    self._store_resource_data(resource, text_content, embedding)
+                    self._store_expert_data(expert, text_content, embedding)
                     
-                    logger.info(f"Indexed resource: {resource['title'][:100]}...")
+                    logger.info(f"Indexed expert: {expert['firstname']} {expert['lastname']}")
                     
                 except Exception as e:
-                    logger.error(f"Error indexing resource {resource.get('doi', 'Unknown DOI')}: {e}")
+                    logger.error(f"Error indexing expert {expert.get('id', 'Unknown ID')}: {e}")
                     continue
             
-            logger.info(f"Successfully created Redis indexes for {len(resources)} resources")
+            logger.info(f"Successfully created Redis indexes for {len(experts)} experts")
             return True
             
         except Exception as e:
             logger.error(f"Error creating Redis indexes: {e}")
             return False
 
-    def _create_text_content(self, resource: Dict[str, Any]) -> str:
+    def _create_text_content(self, expert: Dict[str, Any]) -> str:
         """Create combined text content for embedding."""
-        text_parts = [f"Title: {resource['title']}"]
-        
-        if resource['abstract']:
-            text_parts.append(f"Abstract: {resource['abstract']}")
-        if resource['summary']:
-            text_parts.append(f"Summary: {resource['summary']}")
-        if resource['description']:
-            text_parts.append(f"Description: {resource['description']}")
-        if resource['authors']:
-            text_parts.append(f"Authors: {', '.join(resource['authors'])}")
-        if resource['expert_name']:
-            text_parts.append(f"Expert: {resource['expert_name']}")
-        if resource['knowledge_expertise']:
-            text_parts.append(f"Expertise: {' | '.join(resource['knowledge_expertise'])}")
-        if resource['fields']:
-            text_parts.append(f"Fields: {' | '.join(resource['fields'])}")
-        if resource['subfields']:
-            text_parts.append(f"Subfields: {' | '.join(resource['subfields'])}")
-        if resource['domains']:
-            text_parts.append(f"Domains: {' | '.join(resource['domains'])}")
+        text_parts = [
+            f"Name: {expert['firstname']} {expert['lastname']}",
+            f"Email: {expert['email']}" if expert['email'] else "",
+            f"Unit: {expert['unit']}" if expert['unit'] else "",
+            f"Bio: {expert['bio']}" if expert['bio'] else "",
+            f"ORCID: {expert['orcid']}" if expert['orcid'] else "",
+            f"Expertise: {' | '.join(expert['knowledge_expertise'])}",
+            f"Fields: {' | '.join(expert['fields'])}",
+            f"Subfields: {' | '.join(expert['subfields'])}",
+            f"Domains: {' | '.join(expert['domains'])}",
+            f"Normalized Domains: {' | '.join(expert['normalized_domains'])}",
+            f"Normalized Fields: {' | '.join(expert['normalized_fields'])}",
+            f"Technical Skills: {' | '.join(expert['normalized_skills'])}",
+            f"Keywords: {' | '.join(expert['keywords'])}"
+        ]
             
-        return '\n'.join(text_parts)
+        return '\n'.join(filter(None, text_parts))
 
-    def _store_resource_data(self, resource: Dict[str, Any], text_content: str, 
-                           embedding: np.ndarray) -> None:
-        """Store resource data in Redis."""
-        base_key = f"res:{resource['doi']}"
+    def _store_expert_data(self, expert: Dict[str, Any], text_content: str, 
+                          embedding: np.ndarray) -> None:
+        """Store expert data in Redis."""
+        base_key = f"expert:{expert['id']}"
         
         pipeline = self.redis_text.pipeline()
         try:
@@ -214,12 +226,19 @@ class RedisIndexManager:
             
             # Store metadata
             metadata = {
-                'title': resource['title'],
-                'doi': resource['doi'],
-                'authors': '|'.join(resource['authors']),
-                'expert_name': resource['expert_name'] or '',
-                'fields': '|'.join(resource['fields']),
-                'domains': '|'.join(resource['domains'])
+                'id': expert['id'],
+                'email': expert['email'],
+                'name': f"{expert['firstname']} {expert['lastname']}",
+                'unit': expert['unit'],
+                'bio': expert['bio'],
+                'orcid': expert['orcid'],
+                'expertise': json.dumps(expert['knowledge_expertise']),
+                'fields': json.dumps(expert['fields']),
+                'domains': json.dumps(expert['domains']),
+                'normalized_skills': json.dumps(expert['normalized_skills']),
+                'keywords': json.dumps(expert['keywords']),
+                'is_active': json.dumps(expert['is_active']),
+                'updated_at': expert['updated_at']
             }
             pipeline.hset(f"meta:{base_key}", mapping=metadata)
             
@@ -230,9 +249,9 @@ class RedisIndexManager:
             raise e
 
     def clear_redis_indexes(self) -> bool:
-        """Clear all Redis indexes."""
+        """Clear all expert Redis indexes."""
         try:
-            patterns = ['text:res:*', 'emb:res:*', 'meta:res:*']
+            patterns = ['text:expert:*', 'emb:expert:*', 'meta:expert:*']
             for pattern in patterns:
                 cursor = 0
                 while True:
@@ -242,12 +261,38 @@ class RedisIndexManager:
                     if cursor == 0:
                         break
             
-            logger.info("Cleared all Redis indexes")
+            logger.info("Cleared all expert Redis indexes")
             return True
             
         except Exception as e:
             logger.error(f"Error clearing Redis indexes: {e}")
             return False
+
+    def get_expert_embedding(self, expert_id: str) -> Optional[np.ndarray]:
+        """Retrieve expert embedding from Redis."""
+        try:
+            embedding_bytes = self.redis_binary.get(f"emb:expert:{expert_id}")
+            if embedding_bytes:
+                return np.frombuffer(embedding_bytes, dtype=np.float32)
+            return None
+        except Exception as e:
+            logger.error(f"Error retrieving expert embedding: {e}")
+            return None
+
+    def get_expert_metadata(self, expert_id: str) -> Optional[Dict[str, Any]]:
+        """Retrieve expert metadata from Redis."""
+        try:
+            metadata = self.redis_text.hgetall(f"meta:expert:{expert_id}")
+            if metadata:
+                # Parse JSON fields
+                for field in ['expertise', 'fields', 'domains', 'normalized_skills', 'keywords']:
+                    if metadata.get(field):
+                        metadata[field] = json.loads(metadata[field])
+                return metadata
+            return None
+        except Exception as e:
+            logger.error(f"Error retrieving expert metadata: {e}")
+            return None
 
     def close(self):
         """Close Redis connections."""
