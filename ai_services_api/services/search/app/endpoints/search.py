@@ -1,134 +1,187 @@
-from fastapi import APIRouter, HTTPException, Query
-from fastapi.responses import JSONResponse
+from fastapi import APIRouter, HTTPException, BackgroundTasks
+from typing import List
 from pydantic import BaseModel
-from typing import List, Optional
 import logging
-from ai_services_api.services.search.search_engine import SearchEngine
-from ai_services_api.services.search.database_manager import DatabaseManager
+from ai_services_api.services.search.index_creator import ExpertSearchIndexManager
+from ai_services_api.services.search.ml_predictor import MLPredictor
 
-# Set up logging
+router = APIRouter()
 logger = logging.getLogger(__name__)
 
-# Create router
-router = APIRouter()
+# Initialize ML Predictor
+ml_predictor = MLPredictor()
 
-# Initialize components
-try:
-    logger.info("Initializing SearchEngine and DatabaseManager...")
-    search_engine = SearchEngine()
-    db_manager = DatabaseManager()
-    logger.info("SearchEngine and DatabaseManager initialized successfully")
-except Exception as e:
-    logger.error(f"Failed to initialize components: {e}")
-    raise
+class ExpertSpecialties(BaseModel):
+    expertise: List[str]
+    fields: List[str]
+    subfields: List[str]
+    domains: List[str]
 
-@router.get("/predict")
-async def predict_queries(
-    partial_query: str = Query(..., description="Partial query to get predictions for"),
-    limit: int = Query(5, description="Number of predictions to return")
-):
-    """Get query predictions based on partial input."""
-    logger.info(f"Received prediction request for: {partial_query}")
+class ExpertSearchResult(BaseModel):
+    id: str
+    name: str
+    description: str
+    specialties: ExpertSpecialties
+
+class SearchResponse(BaseModel):
+    total_results: int
+    experts: List[ExpertSearchResult]
+
+class PredictionResponse(BaseModel):
+    predictions: List[str]
+    confidence_scores: List[float]
+
+@router.get("/experts/search/{query}")
+async def search_experts(query: str):
+    """Search for experts based on query text."""
     try:
-        if len(partial_query) < 2:
-            return []
-            
-        # Get predictions from database
-        db_predictions = db_manager.get_matching_queries(
-            partial_query=partial_query,
-            limit=limit
-        )
-        logger.info(f"DB predictions: {db_predictions}")
+        # Initialize search manager
+        search_manager = ExpertSearchIndexManager()
         
-        # Get predictions from search engine
-        search_predictions = []
-        try:
-            search_predictions = search_engine.predict_queries(
-                partial_query=partial_query,
-                limit=limit
+        # Perform search with default limit of 5
+        results = search_manager.search_experts(query, k=5)
+        
+        # Format results
+        formatted_results = [
+            ExpertSearchResult(
+                id=str(result['id']),
+                name=result['name'],
+                description=result.get('bio', ''),
+                specialties=ExpertSpecialties(
+                    expertise=result.get('knowledge_expertise', []),
+                    fields=result.get('fields', []),
+                    subfields=result.get('subfields', []),
+                    domains=result.get('domains', [])
+                )
             )
-            logger.info(f"Search engine predictions: {search_predictions}")
-        except Exception as e:
-            logger.warning(f"Search engine predictions failed: {e}")
+            for result in results
+        ]
         
-        # Combine and deduplicate predictions
-        all_predictions = []
-        seen = set()
+        # Update ML predictor with successful query
+        ml_predictor.update(query)
         
-        # Add database predictions first
-        for pred in db_predictions:
-            if pred.lower() not in seen:
-                all_predictions.append(pred)
-                seen.add(pred.lower())
-                
-        # Add search predictions
-        for pred in search_predictions:
-            if pred.lower() not in seen and len(all_predictions) < limit:
-                all_predictions.append(pred)
-                seen.add(pred.lower())
-        
-        logger.info(f"Returning predictions: {all_predictions}")
-        return all_predictions[:limit]
-        
-    except Exception as e:
-        logger.error(f"Prediction error: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-@router.get("/")
-async def search(
-    query: str,
-    limit: Optional[int] = 5
-):
-    """Perform a semantic search and store the query in history."""
-    try:
-        logger.info(f"Received search request - query: {query}, limit: {limit}")
-        
-        results = search_engine.search(
-            query=query,
-            k=limit
+        return SearchResponse(
+            total_results=len(formatted_results),
+            experts=formatted_results
         )
         
-        try:
-            query_id = db_manager.add_query(
-                query=query,
-                result_count=len(results),
-                search_type='semantic'
+    except Exception as e:
+        logger.error(f"Error searching experts: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail="Internal server error while searching experts"
+        )
+
+@router.get("/experts/predict/{partial_query}")
+async def predict_query(partial_query: str):
+    """Predict query completions based on partial input."""
+    try:
+        predictions = ml_predictor.predict(partial_query, limit=5)
+        scores = [1.0 - (i * 0.1) for i in range(len(predictions))]
+        
+        return PredictionResponse(
+            predictions=predictions,
+            confidence_scores=scores
+        )
+        
+    except Exception as e:
+        logger.error(f"Error predicting queries: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail="Internal server error while predicting queries"
+        )
+
+@router.post("/experts/train-predictor")
+async def train_predictor(background_tasks: BackgroundTasks, queries: List[str]):
+    """Train the ML predictor with historical queries."""
+    try:
+        background_tasks.add_task(ml_predictor.train, queries)
+        return {"message": "Predictor training initiated"}
+    except Exception as e:
+        logger.error(f"Error training predictor: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail="Error initiating predictor training"
+        )
+
+@router.get("/experts/similar/{expert_id}")
+async def find_similar_experts(expert_id: str):
+    """Find similar experts based on an expert's ID."""
+    try:
+        search_manager = ExpertSearchIndexManager()
+        
+        # Get expert's data
+        expert_data = await search_manager.get_expert_text_by_id(expert_id)
+        if not expert_data:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Expert with ID {expert_id} not found"
             )
-            logger.info(f"Successfully stored query with ID: {query_id}")
-        except Exception as db_error:
-            logger.error(f"Failed to store query in database: {db_error}")
         
-        formatted_results = [{
-            'title': r['metadata'].get('title', ''),
-            'abstract': r['metadata'].get('abstract', ''),
-            'summary': r['metadata'].get('summary', ''),
-            'tags': r['metadata'].get('tags', ''),
-            'authors': r['metadata'].get('authors', ''),
-            'similarity_score': r['similarity_score']
-        } for r in results]
+        # Search for similar experts
+        results = search_manager.search_experts(expert_data, k=6)  # Get 6 to account for self-match
         
-        return formatted_results
+        # Format and filter results
+        formatted_results = [
+            ExpertSearchResult(
+                id=str(result['id']),
+                name=result['name'],
+                description=result.get('bio', ''),
+                specialties=ExpertSpecialties(
+                    expertise=result.get('knowledge_expertise', []),
+                    fields=result.get('fields', []),
+                    subfields=result.get('subfields', []),
+                    domains=result.get('domains', [])
+                )
+            )
+            for result in results
+            if str(result['id']) != expert_id  # Filter out the original expert
+        ][:5]  # Limit to 5 results
         
+        return SearchResponse(
+            total_results=len(formatted_results),
+            experts=formatted_results
+        )
+        
+    except HTTPException:
+        raise
     except Exception as e:
-        logger.error(f"Search error: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"Error finding similar experts: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail="Internal server error while finding similar experts"
+        )
 
-@router.get("/popular")
-async def get_popular_searches(limit: Optional[int] = 10):
-    """Get most popular searches from the database."""
+@router.get("/experts/{expert_id}/expertise")
+async def get_expert_expertise(expert_id: str):
+    """Get detailed expertise information for an expert."""
     try:
-        popular_searches = db_manager.get_popular_queries(limit=limit)
-        return popular_searches
+        search_manager = ExpertSearchIndexManager()
+        expert_data = await search_manager.get_expert_metadata(expert_id)
+        
+        if not expert_data:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Expert with ID {expert_id} not found"
+            )
+        
+        return ExpertSearchResult(
+            id=str(expert_data['id']),
+            name=expert_data['name'],
+            description=expert_data.get('bio', ''),
+            specialties=ExpertSpecialties(
+                expertise=expert_data.get('knowledge_expertise', []),
+                fields=expert_data.get('fields', []),
+                subfields=expert_data.get('subfields', []),
+                domains=expert_data.get('domains', [])
+            )
+        )
+        
+    except HTTPException:
+        raise
     except Exception as e:
-        logger.error(f"Error getting popular searches: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-@router.get("/recent")
-async def get_recent_searches(limit: Optional[int] = 10):
-    """Get most recent searches from the database."""
-    try:
-        recent_searches = db_manager.get_recent_queries(limit=limit)
-        return recent_searches
-    except Exception as e:
-        logger.error(f"Error getting recent searches: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"Error getting expert expertise: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail="Internal server error while getting expert expertise"
+        )

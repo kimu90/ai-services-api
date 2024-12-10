@@ -113,46 +113,44 @@ class SearchEngine:
             raise
 
     def predict_queries(self, 
-                       partial_query: str, 
-                       limit: int = 5, 
-                       context: Optional[Dict[str, Any]] = None) -> List[str]:
+                   partial_query: str, 
+                   limit: int = 5, 
+                   context: Optional[Dict[str, Any]] = None) -> List[str]:
         try:
             if not partial_query or len(partial_query) < 2:
                 return []
 
-            # Check cache
-            cache_key = f"pred_{partial_query}_{limit}"
+            # Check cache with shorter expiration for predictions
+            cache_key = f"pred_{partial_query}_{limit}_{context.get('user_id', '')}"
             cached_result = self.cache.get(cache_key)
             if cached_result:
                 return cached_result
 
-            user_id = context.get('user_id') if context else None
             predictions = set()
-
-            # Get predictions from multiple sources
-            predictions.update(self.db.get_matching_queries(partial_query, limit * 2))
-            predictions.update(self.ml_predictor.predict(partial_query, context))
             
-            if user_id:
-                user_preds = self._get_user_predictions(user_id, partial_query)
-                predictions.update(user_preds)
+            # Get predictions from ML predictor first (fast)
+            ml_predictions = self.ml_predictor.predict(
+                partial_query, 
+                context,
+                limit=limit
+            )
+            predictions.update(ml_predictions)
 
-            # Score predictions
-            query_embedding = self.embedding_model.get_embedding(partial_query)
-            scored_predictions = [
-                (pred, self._calculate_prediction_score(
-                    pred, partial_query, user_id, query_embedding))
-                for pred in predictions
-            ]
+            # If we don't have enough predictions, get from database
+            if len(predictions) < limit:
+                db_predictions = self.db.get_matching_queries(
+                    partial_query, 
+                    limit=limit - len(predictions)
+                )
+                predictions.update(db_predictions)
 
-            # Sort and limit results
-            scored_predictions.sort(key=lambda x: x[1], reverse=True)
-            top_predictions = [p for p, _ in scored_predictions[:limit]]
+            # Convert to list and limit results
+            results = list(predictions)[:limit]
+            
+            # Cache results for a short time
+            self.cache.set(cache_key, results, expire=60)  # Cache for 1 minute
 
-            # Cache results
-            self.cache.set(cache_key, top_predictions, expire=300)
-
-            return top_predictions
+            return results
 
         except Exception as e:
             logger.error(f"Error predicting queries: {e}")

@@ -4,6 +4,10 @@ import psycopg2
 from urllib.parse import urlparse
 from neo4j import GraphDatabase
 from dotenv import load_dotenv
+import google.generativeai as genai
+from typing import List, Dict, Any
+import json
+
 
 # Load environment variables
 load_dotenv()
@@ -16,8 +20,13 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+# Configure Gemini
+genai.configure(api_key=os.getenv('GEMINI_API_KEY'))
+model = genai.GenerativeModel('gemini-pro')
+
 class GraphDatabaseInitializer:
     def __init__(self):
+        """Initialize GraphDatabaseInitializer."""
         # Initialize Neo4j connection
         self._neo4j_driver = GraphDatabase.driver(
             os.getenv('NEO4J_URI', 'bolt://localhost:7687'),
@@ -27,57 +36,122 @@ class GraphDatabaseInitializer:
             )
         )
 
+        # Initialize Gemini
+        try:
+            genai.configure(api_key=os.getenv('GEMINI_API_KEY'))
+            self.model = genai.GenerativeModel('gemini-pro')
+            logger.info("Gemini model initialized successfully")
+        except Exception as e:
+            logger.error(f"Error initializing Gemini model: {e}")
+            # Set a flag to indicate Gemini is not available
+            self.model = None
+
+    def _normalize_expertise(self, expertise_list: List[str]) -> Dict[str, Any]:
+        """Use Gemini to normalize and categorize expertise"""
+        if not expertise_list:
+            return {
+                "primary_domains": [],
+                "specific_fields": [],
+                "technical_skills": []
+            }
+
+        # If Gemini is not available, use fallback categorization
+        if self.model is None:
+            return {
+                "primary_domains": expertise_list[:2] if len(expertise_list) >= 2 else expertise_list,
+                "specific_fields": expertise_list[2:4] if len(expertise_list) >= 4 else [],
+                "technical_skills": expertise_list[4:] if len(expertise_list) >= 5 else []
+            }
+
+        prompt = f"""
+        Analyze these areas of expertise and categorize them into the following structure.
+        Expertise: {', '.join(expertise_list)}
+
+        Return only the JSON structure below with these exact keys, nothing else:
+        {{
+            "primary_domains": [],
+            "specific_fields": [],
+            "technical_skills": []
+        }}
+        """
+
+        try:
+            response = self.model.generate_content(prompt)
+            response_text = response.text.strip()
+            
+            # Extract JSON if it's embedded in the response
+            if '{\n' in response_text or '{' in response_text:
+                json_start = response_text.find('{')
+                json_end = response_text.rfind('}') + 1
+                if json_start >= 0 and json_end > json_start:
+                    json_str = response_text[json_start:json_end]
+                    try:
+                        categories = json.loads(json_str)
+                        # Validate required keys
+                        required_keys = {"primary_domains", "specific_fields", "technical_skills"}
+                        if all(key in categories for key in required_keys):
+                            return categories
+                    except json.JSONDecodeError:
+                        logger.error("Failed to parse Gemini response as JSON")
+            
+            # Fallback categorization if parsing fails
+            return {
+                "primary_domains": expertise_list[:2] if len(expertise_list) >= 2 else expertise_list,
+                "specific_fields": expertise_list[2:4] if len(expertise_list) >= 4 else [],
+                "technical_skills": expertise_list[4:] if len(expertise_list) >= 5 else []
+            }
+
+        except Exception as e:
+            logger.error(f"Error using Gemini model: {str(e)}")
+            # Return a basic categorization as fallback
+            return {
+                "primary_domains": expertise_list[:2] if len(expertise_list) >= 2 else expertise_list,
+                "specific_fields": expertise_list[2:4] if len(expertise_list) >= 4 else [],
+                "technical_skills": expertise_list[4:] if len(expertise_list) >= 5 else []
+            }
+
     @staticmethod
     def get_db_connection():
         """Create a connection to PostgreSQL database."""
-        # Check if we're running in Docker
-        in_docker = os.getenv('DOCKER_ENV', 'false').lower() == 'true'
-        
-        # Use DATABASE_URL if provided, else fallback to environment variables
         database_url = os.getenv('DATABASE_URL')
         
         if database_url:
             parsed_url = urlparse(database_url)
-            host = parsed_url.hostname
-            port = parsed_url.port
-            dbname = parsed_url.path[1:]
-            user = parsed_url.username
-            password = parsed_url.password
+            conn_params = {
+                'host': parsed_url.hostname,
+                'port': parsed_url.port,
+                'dbname': parsed_url.path[1:],
+                'user': parsed_url.username,
+                'password': parsed_url.password
+            }
         else:
-            host = 'postgres' if in_docker else 'localhost'
-            port = '5432'
-            dbname = os.getenv('POSTGRES_DB', 'aphrcdb')
-            user = os.getenv('POSTGRES_USER', 'aphrcuser')
-            password = os.getenv('POSTGRES_PASSWORD', 'kimu')
+            conn_params = {
+                'host': os.getenv('POSTGRES_HOST', 'localhost'),
+                'port': os.getenv('POSTGRES_PORT', '5432'),
+                'dbname': os.getenv('POSTGRES_DB', 'aphrc'),
+                'user': os.getenv('POSTGRES_USER', 'postgres'),
+                'password': os.getenv('POSTGRES_PASSWORD', 'p0stgres')
+            }
 
         try:
-            conn = psycopg2.connect(
-                dbname=dbname,
-                user=user,
-                password=password,
-                host=host,
-                port=port
-            )
-            logger.info(f"Successfully connected to database: {dbname}")
+            conn = psycopg2.connect(**conn_params)
+            logger.info(f"Successfully connected to database: {conn_params['dbname']}")
             return conn
         except psycopg2.OperationalError as e:
             logger.error(f"Error connecting to the database: {e}")
             raise
 
-    def _get_neo4j_session(self):
-        """Create a Neo4j session"""
-        return self._neo4j_driver.session()
-
     def _create_indexes(self):
-        """Create indexes for performance optimization"""
+        """Create necessary indexes in Neo4j"""
         index_queries = [
-            "CREATE INDEX expert_orcid IF NOT EXISTS FOR (e:Expert) ON (e.orcid)",
+            "CREATE INDEX expert_id IF NOT EXISTS FOR (e:Expert) ON (e.id)",
+            "CREATE INDEX domain_name IF NOT EXISTS FOR (d:Domain) ON (d.name)",
             "CREATE INDEX field_name IF NOT EXISTS FOR (f:Field) ON (f.name)",
-            "CREATE INDEX subfield_name IF NOT EXISTS FOR (sf:Subfield) ON (sf.name)",
-            "CREATE INDEX domain_name IF NOT EXISTS FOR (d:Domain) ON (d.name)"
+            "CREATE INDEX expertise_name IF NOT EXISTS FOR (ex:Expertise) ON (ex.name)",
+            "CREATE INDEX skill_name IF NOT EXISTS FOR (s:Skill) ON (s.name)"
         ]
         
-        with self._get_neo4j_session() as session:
+        with self._neo4j_driver.session() as session:
             for query in index_queries:
                 try:
                     session.run(query)
@@ -94,13 +168,15 @@ class GraphDatabaseInitializer:
             
             cur.execute("""
                 SELECT 
-                    orcid, 
+                    id,
                     firstname, 
-                    lastname, 
+                    lastname,
+                    knowledge_expertise,
                     domains, 
                     fields, 
-                    subfields 
-                FROM experts
+                    subfields
+                FROM experts_expert
+                WHERE id IS NOT NULL
             """)
             
             experts_data = cur.fetchall()
@@ -113,137 +189,109 @@ class GraphDatabaseInitializer:
             if conn:
                 conn.close()
 
-    def create_expert_node(self, orcid, name):
-        """Create or update an expert node"""
-        with self._get_neo4j_session() as session:
-            try:
-                session.run(
-                    "MERGE (e:Expert {orcid: $orcid}) "
-                    "ON CREATE SET e.name = $name "
-                    "ON MATCH SET e.name = $name", 
-                    {"orcid": orcid, "name": name}
-                )
-            except Exception as e:
-                logger.error(f"Error creating expert node: {e}")
-                raise
+    def create_expert_node(self, session, expert_id: str, name: str, expertise_categories: Dict[str, List[str]]):
+        """Create or update an expert node with categorized expertise"""
+        try:
+            # Validate expertise categories
+            required_keys = {"primary_domains", "specific_fields", "technical_skills"}
+            if not all(key in expertise_categories for key in required_keys):
+                logger.warning(f"Missing required categories for expert {name}. Using empty lists for missing categories.")
+                expertise_categories = {
+                    "primary_domains": expertise_categories.get("primary_domains", []),
+                    "specific_fields": expertise_categories.get("specific_fields", []),
+                    "technical_skills": expertise_categories.get("technical_skills", [])
+                }
 
-    def create_domain_node(self, domain_name):
-        """Create a domain node"""
-        with self._get_neo4j_session() as session:
-            try:
-                session.run(
-                    "MERGE (d:Domain {name: $name})", 
-                    {"name": domain_name}
-                )
-            except Exception as e:
-                logger.error(f"Error creating domain node: {e}")
-                raise
+            # Create expert node
+            session.run(
+                """
+                MERGE (e:Expert {id: $id}) 
+                SET e.name = $name
+                """, 
+                {"id": str(expert_id), "name": name}
+            )
 
-    def create_field_node(self, field_name):
-        """Create a field node"""
-        with self._get_neo4j_session() as session:
-            try:
-                session.run(
-                    "MERGE (f:Field {name: $name})", 
-                    {"name": field_name}
-                )
-            except Exception as e:
-                logger.error(f"Error creating field node: {e}")
-                raise
-
-    def create_subfield_node(self, subfield_name):
-        """Create a subfield node"""
-        with self._get_neo4j_session() as session:
-            try:
-                session.run(
-                    "MERGE (sf:Subfield {name: $name})", 
-                    {"name": subfield_name}
-                )
-            except Exception as e:
-                logger.error(f"Error creating subfield node: {e}")
-                raise
-
-    def create_relationships(self, orcid, domains, fields, subfields):
-        """Create relationships between expert and domain/field/subfield nodes"""
-        with self._get_neo4j_session() as session:
-            try:
-                # Create relationships for unique domains, fields, and subfields
-                for domain in set(domains or []):
+            # Create and connect expertise categories
+            for domain in expertise_categories["primary_domains"]:
+                if domain:  # Only create non-empty domains
                     session.run(
                         """
-                        MATCH (e:Expert {orcid: $orcid})
-                        MATCH (d:Domain {name: $domain})
-                        MERGE (e)-[:WORKS_IN_DOMAIN]->(d)
-                        """, 
-                        {"orcid": orcid, "domain": domain}
+                        MATCH (e:Expert {id: $expert_id})
+                        MERGE (d:Domain {name: $domain})
+                        MERGE (e)-[:HAS_DOMAIN]->(d)
+                        """,
+                        {"expert_id": str(expert_id), "domain": domain}
                     )
 
-                for field in set(fields or []):
+            for field in expertise_categories["specific_fields"]:
+                if field:  # Only create non-empty fields
                     session.run(
                         """
-                        MATCH (e:Expert {orcid: $orcid})
-                        MATCH (f:Field {name: $field})
-                        MERGE (e)-[:WORKS_IN_FIELD]->(f)
-                        """, 
-                        {"orcid": orcid, "field": field}
+                        MATCH (e:Expert {id: $expert_id})
+                        MERGE (f:Field {name: $field})
+                        MERGE (e)-[:HAS_FIELD]->(f)
+                        """,
+                        {"expert_id": str(expert_id), "field": field}
                     )
 
-                for subfield in set(subfields or []):
+            for skill in expertise_categories["technical_skills"]:
+                if skill:  # Only create non-empty skills
                     session.run(
                         """
-                        MATCH (e:Expert {orcid: $orcid})
-                        MATCH (sf:Subfield {name: $subfield})
-                        MERGE (e)-[:WORKS_IN_SUBFIELD]->(sf)
-                        """, 
-                        {"orcid": orcid, "subfield": subfield}
+                        MATCH (e:Expert {id: $expert_id})
+                        MERGE (s:Skill {name: $skill})
+                        MERGE (e)-[:HAS_SKILL]->(s)
+                        """,
+                        {"expert_id": str(expert_id), "skill": skill}
                     )
-            except Exception as e:
-                logger.error(f"Error creating relationships: {e}")
-                raise
+
+            logger.info(f"Successfully created/updated expert node: {name}")
+
+        except Exception as e:
+            logger.error(f"Error creating expert node: {e}")
+            raise
 
     def initialize_graph(self):
-        """Main method to initialize the graph database"""
+        """Initialize the graph with experts and their relationships"""
         try:
-            # Create indexes
+            # Create indexes first
             self._create_indexes()
-
-            # Fetch experts data from PostgreSQL
+            
+            # Fetch experts data
             experts_data = self._fetch_experts_data()
             
             if not experts_data:
                 logger.warning("No experts data found to process")
                 return
 
-            # Process each expert's data
-            for expert_data in experts_data:
-                try:
-                    orcid, firstname, lastname, domains, fields, subfields = expert_data
+            # Process each expert
+            with self._neo4j_driver.session() as session:
+                for expert_data in experts_data:
+                    try:
+                        # Unpack data
+                        (expert_id, firstname, lastname, knowledge_expertise, 
+                         domains, fields, subfields) = expert_data
 
-                    if not orcid:
+                        if not expert_id:
+                            continue
+
+                        # Normalize expertise using Gemini
+                        expertise_categories = self._normalize_expertise(knowledge_expertise)
+
+                        # Create expert node with categorized expertise
+                        expert_name = f"{firstname} {lastname}"
+                        self.create_expert_node(
+                            session, 
+                            expert_id, 
+                            expert_name, 
+                            expertise_categories
+                        )
+
+                        logger.info(f"Processed expert: {expert_name}")
+
+                    except Exception as e:
+                        logger.error(f"Error processing expert data: {e}")
                         continue
-
-                    # Create expert node
-                    expert_name = f"{firstname} {lastname}"
-                    self.create_expert_node(orcid, expert_name)
-
-                    # Create domain, field, and subfield nodes
-                    for domain in set(domains or []):
-                        self.create_domain_node(domain)
-                    
-                    for field in set(fields or []):
-                        self.create_field_node(field)
-                    
-                    for subfield in set(subfields or []):
-                        self.create_subfield_node(subfield)
-
-                    # Create relationships
-                    self.create_relationships(orcid, domains, fields, subfields)
-                    
-                    logger.info(f"Processed expert: {expert_name}")
-
-                except Exception as e:
-                    logger.error(f"Error processing expert data: {e}")
-                    continue
 
             logger.info("Graph initialization complete!")
 
@@ -252,16 +300,13 @@ class GraphDatabaseInitializer:
             raise
 
     def close(self):
-        """Close the Neo4j driver connection"""
+        """Close the Neo4j driver"""
         if self._neo4j_driver:
             self._neo4j_driver.close()
 
-
 def main():
-    # Initialize the graph database
     initializer = GraphDatabaseInitializer()
     try:
-        # Run the graph initialization
         initializer.initialize_graph()
     except Exception as e:
         logger.error(f"Initialization failed: {e}")

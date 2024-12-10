@@ -3,226 +3,325 @@ import psycopg2
 from psycopg2 import sql
 from urllib.parse import urlparse
 import logging
+import json
+import secrets
+import string
+import pandas as pd
 
-logging.basicConfig(
-    level=logging.INFO, 
-    format='%(asctime)s - %(levelname)s: %(message)s',
-    datefmt='%Y-%m-%d %H:%M:%S'
-)
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s: %(message)s', datefmt='%Y-%m-%d %H:%M:%S')
 logger = logging.getLogger(__name__)
 
 def get_connection_params():
-    """Get database connection parameters from environment variables."""
     database_url = os.getenv('DATABASE_URL')
-    
     if database_url:
         parsed_url = urlparse(database_url)
-        return {
-            'host': parsed_url.hostname,
-            'port': parsed_url.port,
-            'dbname': parsed_url.path[1:],  # Remove leading '/'
-            'user': parsed_url.username,
-            'password': parsed_url.password
-        }
+        return {'host': parsed_url.hostname, 'port': parsed_url.port, 'dbname': parsed_url.path[1:],
+                'user': parsed_url.username, 'password': parsed_url.password}
     else:
         in_docker = os.getenv('DOCKER_ENV', 'false').lower() == 'true'
-        return {
-            'host': 'postgres' if in_docker else 'localhost',
-            'port': '5432',
-            'dbname': os.getenv('POSTGRES_DB', 'aphrcdb'),
-            'user': os.getenv('POSTGRES_USER', 'aphrcuser'),
-            'password': os.getenv('POSTGRES_PASSWORD', 'kimu')
-        }
+        return {'host': '167.86.85.127' if in_docker else 'localhost', 'port': '5432',
+                'dbname': os.getenv('POSTGRES_DB', 'aphrc'), 'user': os.getenv('POSTGRES_USER', 'postgres'),
+                'password': os.getenv('POSTGRES_PASSWORD', 'p0stgres')}
 
 def get_db_connection(dbname=None):
-    """
-    Create a connection to PostgreSQL database.
-    If dbname is None, uses the configured database name.
-    """
     params = get_connection_params()
     if dbname:
         params['dbname'] = dbname
-        
     try:
         conn = psycopg2.connect(**params)
-        logger.info(f"Successfully connected to database: {params['dbname']}")
+        logger.info(f"Successfully connected to database: {params['dbname']} at {params['host']}")
         return conn
     except psycopg2.OperationalError as e:
         logger.error(f"Error connecting to the database: {e}")
-        logger.error(f"Connection params: {params}")
         raise
 
 def create_database_if_not_exists():
-    """Create the database if it doesn't exist."""
     params = get_connection_params()
     target_dbname = params['dbname']
-    
     try:
-        # First connect to 'postgres' database
+        try:
+            conn = get_db_connection()
+            logger.info(f"Database {target_dbname} already exists")
+            conn.close()
+            return
+        except psycopg2.OperationalError:
+            pass
         conn = get_db_connection('postgres')
         conn.autocommit = True
         cur = conn.cursor()
-
-        # Check if database exists
         cur.execute("SELECT 1 FROM pg_database WHERE datname = %s", (target_dbname,))
-        exists = cur.fetchone()
-        
-        if not exists:
+        if not cur.fetchone():
             logger.info(f"Creating database {target_dbname}...")
-            cur.execute(sql.SQL("CREATE DATABASE {}").format(
-                sql.Identifier(target_dbname)
-            ))
+            cur.execute(sql.SQL("CREATE DATABASE {}").format(sql.Identifier(target_dbname)))
             logger.info(f"Database {target_dbname} created successfully")
         else:
             logger.info(f"Database {target_dbname} already exists")
-
     finally:
         if 'cur' in locals():
             cur.close()
         if 'conn' in locals():
             conn.close()
 
-def create_tables():
-    """Create the necessary database tables."""
+def generate_fake_password():
+    return ''.join(secrets.choice(string.ascii_letters + string.digits) for _ in range(12))
+
+def fix_experts_table():
     conn = get_db_connection()
     cur = conn.cursor()
-
-    sql_statements = [
-        # Core publication tables
-        """
-        CREATE TABLE IF NOT EXISTS publications (
-            doi VARCHAR(255) PRIMARY KEY,
-            title TEXT NOT NULL,
-            abstract TEXT,
-            summary TEXT
-        );
-        """,
-        """
-        CREATE TABLE IF NOT EXISTS tags (
-            tag_id SERIAL PRIMARY KEY,
-            tag_name VARCHAR(255) NOT NULL
-        );
-        """,
-        """
-        CREATE TABLE IF NOT EXISTS publication_tag (
-            publication_doi VARCHAR(255) REFERENCES publications(doi) ON DELETE CASCADE,
-            tag_id INT REFERENCES tags(tag_id) ON DELETE CASCADE,
-            PRIMARY KEY (publication_doi, tag_id)
-        );
-        """,
-        """
-        CREATE TABLE IF NOT EXISTS authors (
-            author_id SERIAL PRIMARY KEY,
-            name TEXT NOT NULL,
-            orcid VARCHAR(255),
-            author_identifier VARCHAR(255),
-            CONSTRAINT unique_author UNIQUE (name, orcid, author_identifier)
-        );
-        """,
-        """
-        CREATE TABLE IF NOT EXISTS author_publication (
-            author_id INT REFERENCES authors(author_id) ON DELETE CASCADE,
-            doi VARCHAR(255) REFERENCES publications(doi) ON DELETE CASCADE,
-            PRIMARY KEY (author_id, doi)
-        );
-        """,
-        """
-        CREATE TABLE IF NOT EXISTS experts (
-            orcid VARCHAR(255) PRIMARY KEY,
-            firstname VARCHAR(255) NOT NULL,
-            lastname VARCHAR(255) NOT NULL,
-            domains TEXT[],
-            fields TEXT[],
-            subfields TEXT[]
-        );
-        """,
-        
-        # Search history tables
-        """
-        CREATE TABLE IF NOT EXISTS query_history (
-            query_id SERIAL PRIMARY KEY,
-            query TEXT NOT NULL,
-            timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            result_count INT,
-            search_type VARCHAR(50)
-        );
-        """,
-        """
-        CREATE TABLE IF NOT EXISTS term_frequencies (
-            term_id SERIAL PRIMARY KEY,
-            term TEXT NOT NULL UNIQUE,
-            frequency INTEGER DEFAULT 1,
-            last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        );
-        """,
-        
-        # Create indices for search tables
-        """
-        CREATE INDEX IF NOT EXISTS idx_query_history_query 
-        ON query_history (query text_pattern_ops);
-        """,
-        """
-        CREATE INDEX IF NOT EXISTS idx_query_history_timestamp 
-        ON query_history (timestamp DESC);
-        """,
-        """
-        CREATE INDEX IF NOT EXISTS idx_term_frequencies_term 
-        ON term_frequencies (term);
-        """
-    ]
-
     try:
-        for statement in sql_statements:
-            cur.execute(statement)
-        conn.commit()
-        logger.info("All tables created successfully")
+        cur.execute("SELECT EXISTS (SELECT FROM information_schema.tables WHERE table_name = 'experts_expert');")
+        table_exists = cur.fetchone()[0]
+        
+        if table_exists:
+            # Original columns to add
+            columns_to_add = [
+                ('firstname', 'VARCHAR(255)'),
+                ('lastname', 'VARCHAR(255)'),
+                ('designation', 'VARCHAR(255)'),
+                ('theme', 'VARCHAR(255)'),
+                ('unit', 'VARCHAR(255)'),
+                ('contact_details', 'VARCHAR(255)'),
+                ('knowledge_expertise', 'JSONB'),
+                ('orcid', 'VARCHAR(255)'),
+                ('domains', 'JSONB'),
+                ('fields', 'JSONB'),
+                ('subfields', 'JSONB')
+            ]
+            
+            # Add normalized expertise columns
+            cur.execute("""
+                ALTER TABLE experts_expert
+                ADD COLUMN IF NOT EXISTS normalized_domains text[] DEFAULT '{}',
+                ADD COLUMN IF NOT EXISTS normalized_fields text[] DEFAULT '{}',
+                ADD COLUMN IF NOT EXISTS normalized_skills text[] DEFAULT '{}',
+                ADD COLUMN IF NOT EXISTS keywords text[] DEFAULT '{}',
+                ADD COLUMN IF NOT EXISTS search_text text,
+                ADD COLUMN IF NOT EXISTS last_updated timestamp with time zone DEFAULT NOW();
+            """)
+            logger.info("Added normalized expertise columns")
 
+            # Create function to update search_text
+            cur.execute("""
+                CREATE OR REPLACE FUNCTION update_expert_search_text()
+                RETURNS TRIGGER AS $$
+                BEGIN
+                    NEW.search_text = 
+                        COALESCE(NEW.knowledge_expertise::text, '') || ' ' ||
+                        COALESCE(array_to_string(NEW.normalized_domains, ' '), '') || ' ' ||
+                        COALESCE(array_to_string(NEW.normalized_fields, ' '), '') || ' ' ||
+                        COALESCE(array_to_string(NEW.normalized_skills, ' '), '');
+                    RETURN NEW;
+                END;
+                $$ LANGUAGE plpgsql;
+            """)
+            logger.info("Created search text update function")
+
+            # Create trigger
+            cur.execute("""
+                DROP TRIGGER IF EXISTS expert_search_text_trigger ON experts_expert;
+                CREATE TRIGGER expert_search_text_trigger
+                BEFORE INSERT OR UPDATE ON experts_expert
+                FOR EACH ROW
+                EXECUTE FUNCTION update_expert_search_text();
+            """)
+            logger.info("Created search text update trigger")
+
+            # Create GIN indexes for array columns
+            cur.execute("""
+                CREATE INDEX IF NOT EXISTS idx_expert_domains ON experts_expert USING gin(normalized_domains);
+                CREATE INDEX IF NOT EXISTS idx_expert_fields ON experts_expert USING gin(normalized_fields);
+                CREATE INDEX IF NOT EXISTS idx_expert_skills ON experts_expert USING gin(normalized_skills);
+                CREATE INDEX IF NOT EXISTS idx_expert_keywords ON experts_expert USING gin(keywords);
+            """)
+            logger.info("Created GIN indexes for array columns")
+
+            # Create text search index
+            cur.execute("""
+                CREATE INDEX IF NOT EXISTS idx_expert_search ON experts_expert USING gin(to_tsvector('english', COALESCE(search_text, '')));
+            """)
+            logger.info("Created text search index")
+
+            # Update existing rows to populate search_text
+            cur.execute("""
+                UPDATE experts_expert SET last_updated = NOW();
+            """)
+            logger.info("Updated existing rows to trigger search text generation")
+
+            # Add original columns if they don't exist
+            for column_name, column_type in columns_to_add:
+                cur.execute(f"""
+                    SELECT EXISTS (
+                        SELECT FROM information_schema.columns 
+                        WHERE table_name = 'experts_expert' AND column_name = %s
+                    );
+                """, (column_name,))
+                column_exists = cur.fetchone()[0]
+                if not column_exists:
+                    cur.execute(f"ALTER TABLE experts_expert ADD COLUMN {column_name} {column_type};")
+                    logger.info(f"Added '{column_name}' column to experts_expert table.")
+
+            # Handle existing data
+            cur.execute("""
+                UPDATE experts_expert
+                SET firstname = COALESCE(NULLIF(TRIM(firstname), ''), 'Unknown'),
+                    lastname = COALESCE(NULLIF(TRIM(lastname), ''), 'Unknown')
+                WHERE firstname IS NULL OR lastname IS NULL;
+            """)
+
+            # Handle duplicates
+            cur.execute("""
+                WITH duplicates AS (
+                    SELECT id, ROW_NUMBER() OVER (ORDER BY id) as row_num
+                    FROM experts_expert
+                    WHERE firstname = 'Unknown' AND lastname = 'Unknown'
+                )
+                UPDATE experts_expert
+                SET lastname = lastname || ' ' || duplicates.row_num
+                FROM duplicates
+                WHERE experts_expert.id = duplicates.id AND duplicates.row_num > 1;
+            """)
+            logger.info("Updated duplicate 'Unknown' entries.")
+
+            # Add unique constraint if it doesn't exist
+            cur.execute("""
+                SELECT EXISTS (
+                    SELECT FROM information_schema.table_constraints 
+                    WHERE table_name = 'experts_expert' 
+                    AND constraint_type = 'UNIQUE' 
+                    AND constraint_name = 'experts_expert_firstname_lastname_key'
+                );
+            """)
+            unique_constraint_exists = cur.fetchone()[0]
+            if not unique_constraint_exists:
+                cur.execute("""
+                    ALTER TABLE experts_expert
+                    ADD CONSTRAINT experts_expert_firstname_lastname_key UNIQUE (firstname, lastname);
+                """)
+                logger.info("Added unique constraint on firstname and lastname.")
+
+            conn.commit()
+            logger.info("Fixed experts_expert table structure and handled all columns and indexes.")
+        else:
+            logger.warning("experts_expert table does not exist. It will be created when needed.")
+            
     except Exception as e:
         conn.rollback()
-        logger.error(f"Error creating tables: {e}")
+        logger.error(f"Error fixing experts_expert table: {e}")
         raise
-
     finally:
         cur.close()
         conn.close()
 
-def drop_all_tables():
-    """Drop all tables in the database."""
+def create_tables():
     conn = get_db_connection()
     cur = conn.cursor()
-
     try:
-        tables = [
-            'term_frequencies',
-            'query_history',
-            'experts', 
-            'author_publication', 
-            'authors', 
-            'publication_tag', 
-            'tags', 
-            'publications'
-        ]
-
-        for table in tables:
-            cur.execute(f"DROP TABLE IF EXISTS {table} CASCADE")
-        
+        cur.execute("CREATE EXTENSION IF NOT EXISTS \"uuid-ossp\";")
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS experts_expert (
+                id SERIAL PRIMARY KEY,
+                firstname VARCHAR(255) NOT NULL,
+                lastname VARCHAR(255) NOT NULL,
+                designation VARCHAR(255),
+                theme VARCHAR(255),
+                unit VARCHAR(255),
+                contact_details VARCHAR(255),
+                knowledge_expertise JSONB,
+                orcid VARCHAR(255) UNIQUE,
+                domains JSONB,
+                fields JSONB,
+                subfields JSONB,
+                password VARCHAR(255) NOT NULL,
+                UNIQUE (firstname, lastname)
+            );
+            CREATE TABLE IF NOT EXISTS resources_resource (
+                doi VARCHAR(255) PRIMARY KEY,
+                title TEXT NOT NULL,
+                abstract TEXT,
+                summary TEXT,
+                authors TEXT[],
+                description TEXT,
+                expert_id INTEGER REFERENCES experts_expert(id)
+            );
+            CREATE TABLE IF NOT EXISTS tags (
+                tag_id SERIAL PRIMARY KEY,
+                tag_name VARCHAR(255) UNIQUE NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS query_history_ai (
+                query_id SERIAL PRIMARY KEY,
+                query TEXT NOT NULL,
+                timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                result_count INTEGER,
+                search_type VARCHAR(50),
+                user_id TEXT
+            );
+            CREATE TABLE IF NOT EXISTS term_frequencies (
+                term VARCHAR(255),
+                frequency INTEGER DEFAULT 1,
+                expert_id INTEGER REFERENCES experts_expert(id),
+                last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (term)
+            );
+            CREATE INDEX IF NOT EXISTS idx_experts_name ON experts_expert (firstname, lastname);
+            CREATE INDEX IF NOT EXISTS idx_query_history_timestamp ON query_history_ai (timestamp DESC);
+            CREATE INDEX IF NOT EXISTS idx_query_history_user ON query_history_ai (user_id);
+        """)
         conn.commit()
-        logger.info("All tables dropped successfully")
-
+        logger.info("All tables created successfully")
     except Exception as e:
         conn.rollback()
-        logger.error(f"Error dropping tables: {e}")
+        logger.error(f"Error creating tables: {e}")
         raise
+    finally:
+        cur.close()
+        conn.close()
 
+def load_initial_experts(expertise_csv: str):
+    conn = get_db_connection()
+    cur = conn.cursor()
+    try:
+        df = pd.read_csv(expertise_csv)
+        for _, row in df.iterrows():
+            firstname = row['Firstname']
+            lastname = row['Lastname']
+            designation = row['Designation']
+            theme = row['Theme']
+            unit = row['Unit']
+            contact_details = row['Contact Details']
+            expertise_str = row['Knowledge and Expertise']
+            expertise_list = [exp.strip() for exp in expertise_str.split(',') if exp.strip()]
+            fake_password = generate_fake_password()
+
+            cur.execute("""
+                INSERT INTO experts_expert (
+                    firstname, lastname, designation, theme, unit, contact_details, 
+                    knowledge_expertise, domains, fields, subfields, password
+                ) VALUES (
+                    %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
+                ) ON CONFLICT (firstname, lastname) DO UPDATE
+                SET designation = EXCLUDED.designation,
+                    theme = EXCLUDED.theme,
+                    unit = EXCLUDED.unit,
+                    contact_details = EXCLUDED.contact_details,
+                    knowledge_expertise = EXCLUDED.knowledge_expertise,
+                    password = EXCLUDED.password
+                RETURNING id
+            """, (
+                firstname, lastname, designation, theme, unit, contact_details,
+                json.dumps(expertise_list), json.dumps([]), json.dumps([]), json.dumps([]),
+                fake_password
+            ))
+            conn.commit()
+            logger.info(f"Added/updated expert data for {firstname} {lastname}")
+    except Exception as e:
+        conn.rollback()
+        logger.error(f"Error loading initial expert data: {e}")
     finally:
         cur.close()
         conn.close()
 
 if __name__ == "__main__":
-    import sys
-    
-    if len(sys.argv) > 1 and sys.argv[1] == 'drop':
-        drop_all_tables()
-    else:
-        create_database_if_not_exists()
-        create_tables()
+    create_database_if_not_exists()
+    create_tables()
+    fix_experts_table()
+    load_initial_experts('expertise.csv')

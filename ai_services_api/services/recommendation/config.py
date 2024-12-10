@@ -21,7 +21,7 @@ class Settings(BaseSettings):
     NEO4J_PASSWORD: str = "password123456789!"
     
     # PostgreSQL Settings
-    POSTGRES_HOST: str = "postgres"
+    POSTGRES_HOST: str = "167.86.85.127"
     POSTGRES_PORT: int = 5432
     POSTGRES_DB: str
     POSTGRES_USER: str

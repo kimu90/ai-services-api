@@ -3,20 +3,16 @@ import requests
 from dotenv import load_dotenv
 import google.generativeai as genai
 from typing import Optional, Dict, Any, List, Tuple
-import psycopg2
 import logging
 import csv
 import asyncio
 import aiohttp
 import pandas as pd
 import json
+from ai_services_api.services.data.db_utils import get_db_connection
 
-from ai_services_api.services.data.database_setup import get_db_connection
-
-# Load environment variables
 load_dotenv()
 
-# Configure logging
 logging.basicConfig(
     level=logging.INFO, 
     format='%(asctime)s - %(levelname)s: %(message)s',
@@ -25,7 +21,6 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 def setup_gemini():
-    """Initialize the Gemini API with the API key."""
     api_key = os.getenv('GEMINI_API_KEY')
     if not api_key:
         raise ValueError("GEMINI_API_KEY environment variable is not set")
@@ -33,7 +28,6 @@ def setup_gemini():
     return genai.GenerativeModel('gemini-pro')
 
 def summarize(title: str, abstract: str) -> Optional[str]:
-    """Create a summary using Gemini AI."""
     try:
         if not abstract or abstract.strip() == "N/A":
             return "No abstract available for summarization"
@@ -52,8 +46,37 @@ def summarize(title: str, abstract: str) -> Optional[str]:
         logger.error(f"Error in summarization: {e}")
         return "Failed to generate summary"
 
+def categorize_expertise(expertise_list: List[str]) -> Optional[Dict[str, Any]]:
+    try:
+        if not expertise_list:
+            return None
+            
+        model = setup_gemini()
+        prompt = f"""
+        Given these areas of expertise: {', '.join(expertise_list)}
+        
+        Please categorize each expertise into academic domains, fields, and subfields.
+        Format the response as JSON with this structure:
+        {{
+            "categorized_expertise": [
+                {{
+                    "original_term": "original expertise term",
+                    "domain": "broader domain category",
+                    "field": "specific field",
+                    "subfield": "specific subfield if applicable, or null"
+                }}
+            ]
+        }}
+        
+        Be specific and consistent with academic categorization.
+        """
+        response = model.generate_content(prompt)
+        return json.loads(response.text)
+    except Exception as e:
+        logger.error(f"Error in expertise categorization: {e}")
+        return None
+
 def convert_inverted_index_to_text(inverted_index: Dict) -> str:
-    """Convert an inverted index to readable text."""
     if not inverted_index:
         return "N/A"
     
@@ -68,20 +91,47 @@ def convert_inverted_index_to_text(inverted_index: Dict) -> str:
         return "N/A"
 
 def safe_str(value: Any) -> str:
-    """Convert a value to string, handling None values."""
     return str(value) if value is not None else "N/A"
 
 class DatabaseManager:
     def __init__(self):
         self.conn = get_db_connection()
         self.cur = self.conn.cursor()
+        self._create_tables()
+
+    def _create_tables(self):
+        try:
+            # Add expertise column to experts_ai if it doesn't exist
+            self.cur.execute("""
+                ALTER TABLE experts_ai
+                ADD COLUMN IF NOT EXISTS expertise TEXT[]
+            """)
+            
+            # Create expertise_categories table if it doesn't exist
+            self.cur.execute("""
+                CREATE TABLE IF NOT EXISTS expertise_categories (
+                    id SERIAL PRIMARY KEY,
+                    expert_orcid TEXT REFERENCES experts_ai(orcid),
+                    original_term TEXT,
+                    domain TEXT,
+                    field TEXT,
+                    subfield TEXT,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+            
+            self.conn.commit()
+            logger.info("Database tables initialized successfully")
+        except Exception as e:
+            self.conn.rollback()
+            logger.error(f"Error creating tables: {e}")
+            raise
 
     def add_tag(self, tag_name: str, tag_type: str = 'general') -> int:
-        """Add a tag and return its ID. If tag exists, return existing ID."""
         try:
             full_tag_name = f"{tag_type}:{tag_name}"
             self.cur.execute(
-                "SELECT tag_id FROM tags WHERE tag_name = %s",
+                "SELECT tag_id FROM tags_ai WHERE tag_name = %s",
                 (full_tag_name,)
             )
             result = self.cur.fetchone()
@@ -89,7 +139,7 @@ class DatabaseManager:
                 return result[0]
             
             self.cur.execute(
-                "INSERT INTO tags (tag_name) VALUES (%s) RETURNING tag_id",
+                "INSERT INTO tags_ai (tag_name) VALUES (%s) RETURNING tag_id",
                 (full_tag_name,)
             )
             tag_id = self.cur.fetchone()[0]
@@ -101,10 +151,9 @@ class DatabaseManager:
             raise
 
     def add_author(self, name: str, orcid: str = None, author_identifier: str = None) -> int:
-        """Add an author and return their ID. If author exists, return existing ID."""
         try:
             self.cur.execute("""
-                SELECT author_id FROM authors 
+                SELECT author_id FROM authors_ai 
                 WHERE name = %s AND (orcid = %s OR author_identifier = %s)
             """, (name, orcid, author_identifier))
             result = self.cur.fetchone()
@@ -112,7 +161,7 @@ class DatabaseManager:
                 return result[0]
             
             self.cur.execute("""
-                INSERT INTO authors (name, orcid, author_identifier)
+                INSERT INTO authors_ai (name, orcid, author_identifier)
                 VALUES (%s, %s, %s) RETURNING author_id
             """, (name, orcid, author_identifier))
             author_id = self.cur.fetchone()[0]
@@ -124,10 +173,9 @@ class DatabaseManager:
             raise
 
     def add_publication(self, doi: str, title: str, abstract: str, summary: str) -> None:
-        """Add a publication to the database."""
         try:
             self.cur.execute("""
-                INSERT INTO publications (doi, title, abstract, summary)
+                INSERT INTO publications_ai (doi, title, abstract, summary)
                 VALUES (%s, %s, %s, %s)
                 ON CONFLICT (doi) DO UPDATE 
                 SET title = EXCLUDED.title,
@@ -141,19 +189,21 @@ class DatabaseManager:
             raise
 
     def add_expert(self, orcid: str, firstname: str, lastname: str, 
-                  domains: List[str], fields: List[str], subfields: List[str]) -> None:
-        """Add or update an expert in the database."""
+                  domains: List[str], fields: List[str], subfields: List[str],
+                  expertise: List[str] = None) -> None:
         try:
             self.cur.execute("""
-                INSERT INTO experts (orcid, firstname, lastname, domains, fields, subfields)
-                VALUES (%s, %s, %s, %s, %s, %s)
+                INSERT INTO experts_ai 
+                (orcid, firstname, lastname, domains, fields, subfields, expertise)
+                VALUES (%s, %s, %s, %s, %s, %s, %s)
                 ON CONFLICT (orcid) DO UPDATE 
                 SET firstname = EXCLUDED.firstname,
                     lastname = EXCLUDED.lastname,
                     domains = EXCLUDED.domains,
                     fields = EXCLUDED.fields,
-                    subfields = EXCLUDED.subfields
-            """, (orcid, firstname, lastname, domains, fields, subfields))
+                    subfields = EXCLUDED.subfields,
+                    expertise = EXCLUDED.expertise
+            """, (orcid, firstname, lastname, domains, fields, subfields, expertise))
             self.conn.commit()
             logger.info(f"Expert {firstname} {lastname} added/updated successfully")
         except Exception as e:
@@ -161,11 +211,36 @@ class DatabaseManager:
             logger.error(f"Error adding expert: {e}")
             raise
 
+    def add_expertise_categories(self, expert_orcid: str, categorized_expertise: Dict[str, Any]) -> None:
+        try:
+            if not categorized_expertise or 'categorized_expertise' not in categorized_expertise:
+                return
+
+            for item in categorized_expertise['categorized_expertise']:
+                self.cur.execute("""
+                    INSERT INTO expertise_categories 
+                    (expert_orcid, original_term, domain, field, subfield)
+                    VALUES (%s, %s, %s, %s, %s)
+                    ON CONFLICT DO NOTHING
+                """, (
+                    expert_orcid,
+                    item['original_term'],
+                    item['domain'],
+                    item['field'],
+                    item.get('subfield')
+                ))
+            
+            self.conn.commit()
+            logger.info(f"Added expertise categories for expert {expert_orcid}")
+        except Exception as e:
+            self.conn.rollback()
+            logger.error(f"Error adding expertise categories: {e}")
+            raise
+
     def link_publication_tag(self, doi: str, tag_id: int) -> None:
-        """Link a publication with a tag."""
         try:
             self.cur.execute("""
-                INSERT INTO publication_tag (publication_doi, tag_id)
+                INSERT INTO publication_tag_ai (publication_doi, tag_id)
                 VALUES (%s, %s)
                 ON CONFLICT DO NOTHING
             """, (doi, tag_id))
@@ -176,10 +251,9 @@ class DatabaseManager:
             raise
 
     def link_author_publication(self, author_id: int, doi: str) -> None:
-        """Link an author with a publication."""
         try:
             self.cur.execute("""
-                INSERT INTO author_publication (author_id, doi)
+                INSERT INTO author_publication_ai (author_id, doi)
                 VALUES (%s, %s)
                 ON CONFLICT DO NOTHING
             """, (author_id, doi))
@@ -190,19 +264,16 @@ class DatabaseManager:
             raise
 
     def close(self):
-        """Close database connection."""
         self.cur.close()
         self.conn.close()
 
 class OpenAlexProcessor:
     def __init__(self):
-        """Initialize the OpenAlex processor."""
         self.base_url = os.getenv('OPENALEX_API_URL', 'https://api.openalex.org')
-        self.institution_id = os.getenv('OPENALEX_INSTITUTION_ID', 'I4210129448')  # APHRC institution ID
+        self.institution_id = os.getenv('OPENALEX_INSTITUTION_ID', 'I4210129448')
         self.db = DatabaseManager()
     
     def _process_single_work(self, work: Dict) -> bool:
-        """Process a single work and return True if successful."""
         try:
             doi = safe_str(work.get('doi'))
             if doi == "N/A":
@@ -215,10 +286,8 @@ class OpenAlexProcessor:
             abstract = convert_inverted_index_to_text(abstract_index)
             summary = summarize(title, abstract)
             
-            # Add publication to database
             self.db.add_publication(doi, title, abstract, summary)
             
-            # Process authors
             for authorship in work.get('authorships', []):
                 author_name = authorship.get('author', {}).get('display_name')
                 orcid = authorship.get('author', {}).get('orcid')
@@ -228,7 +297,6 @@ class OpenAlexProcessor:
                     author_id = self.db.add_author(author_name, orcid, author_identifier)
                     self.db.link_author_publication(author_id, doi)
             
-            # Process tags/concepts
             for tag in work.get('concepts', []):
                 tag_name = tag.get('display_name')
                 if tag_name:
@@ -242,15 +310,13 @@ class OpenAlexProcessor:
             return False
     
     def process_works(self, max_publications: int = 4):
-        """Process works and save to database."""
         if max_publications <= 0:
             logger.info("No publications requested")
             return
 
         processed_count = 0
         try:
-            # Only fetch one page with exactly the number of items we need
-            url = f"{self.base_url}/works?filter=institutions.id:{self.institution_id}&per_page=4"  # Hardcoded to exactly 4
+            url = f"{self.base_url}/works?filter=institutions.id:{self.institution_id}&per_page=4"
             logger.info(f"Fetching data from: {url}")
             
             response = requests.get(url, headers={'User-Agent': 'APHRC Publication Processor/1.0'})
@@ -261,19 +327,16 @@ class OpenAlexProcessor:
                 logger.info("No results found")
                 return
 
-            # Only process up to max_publications results
             for i, work in enumerate(data['results']):
-                if i >= max_publications:  # Zero-based index check
-                    logger.info(f"Reached limit of {max_publications} publications")
+                if i >= max_publications:
                     break
                 
                 success = self._process_single_work(work)
                 if success:
                     processed_count += 1
-                    logger.info(f"Processed {processed_count}/4 publications")  # Hardcoded to exactly 4
+                    logger.info(f"Processed {processed_count}/4 publications")
                 
                 if processed_count >= max_publications:
-                    logger.info(f"Successfully processed {max_publications} publications")
                     break
 
         except requests.RequestException as e:
@@ -285,7 +348,6 @@ class OpenAlexProcessor:
 
     async def get_expert_works(self, session: aiohttp.ClientSession, openalex_id: str, 
                              retries: int = 3, delay: int = 5) -> List[Dict]:
-        """Fetch works for an expert with retries and rate limiting."""
         works_url = f"{self.base_url}/works"
         params = {
             'filter': f"authorships.author.id:https://openalex.org/A{openalex_id}",
@@ -293,21 +355,16 @@ class OpenAlexProcessor:
         }
 
         logger.info(f"Fetching works for OpenAlex_ID: {openalex_id}")
-        logger.debug(f"Works API URL: {works_url}")
-        logger.debug(f"Query params: {params}")
-
+        
         attempt = 0
         while attempt < retries:
             try:
                 async with session.get(works_url, params=params) as response:
-                    logger.debug(f"Response status: {response.status}")
-
                     if response.status == 200:
                         works_data = await response.json()
-                        logger.debug(f"Retrieved {len(works_data.get('results', []))} works")
                         return works_data.get('results', [])
                     
-                    elif response.status == 429:  # Rate limit error
+                    elif response.status == 429:
                         logger.warning(f"Rate limit hit, retrying... (attempt {attempt + 1}/{retries})")
                         await asyncio.sleep(delay * (attempt + 1))
                     else:
@@ -324,7 +381,6 @@ class OpenAlexProcessor:
 
     async def get_expert_domains(self, session: aiohttp.ClientSession, 
                                firstname: str, lastname: str, openalex_id: str) -> Tuple[List, List, List]:
-        """Extract domains, fields, and subfields from expert's works."""
         works = await self.get_expert_works(session, openalex_id)
         
         domains = set()
@@ -337,7 +393,6 @@ class OpenAlexProcessor:
             topics = work.get('topics', [])
             
             if not topics:
-                logger.debug(f"No topics found for work by {firstname} {lastname}")
                 continue
 
             for topic in topics:
@@ -351,16 +406,11 @@ class OpenAlexProcessor:
                     fields.add(field)
                 subfields.update(topic_subfields)
 
-        logger.info(f"Found {len(domains)} domains, {len(fields)} fields, {len(subfields)} subfields for {firstname} {lastname}")
         return list(domains), list(fields), list(subfields)
 
-    
     def get_expert_openalex_data(self, firstname: str, lastname: str) -> Tuple[str, str]:
-        """Fetch ORCID and OpenAlex ID for an expert."""
         search_url = f"{self.base_url}/authors"
         params = {"search": f"{firstname} {lastname}"}
-        
-        logger.info(f"Searching for expert: {firstname} {lastname}")
         
         try:
             response = requests.get(search_url, params=params)
@@ -372,47 +422,106 @@ class OpenAlexProcessor:
                     author = results[0]
                     orcid = author.get('orcid', '')
                     openalex_id = author.get('id', '').split('/')[-1]
-                    
-                    logger.info(f"Found ORCID: {orcid}, OpenAlex ID: {openalex_id}")
                     return orcid, openalex_id
                 
-                logger.warning(f"No results found for {firstname} {lastname}")
         except requests.RequestException as e:
             logger.error(f"Error fetching data for {firstname} {lastname}: {e}")
         return '', ''
 
-    async def process_experts(self, csv_path: str):
-        """Process experts from CSV and store in database."""
+    async def process_expertise_csv(self, csv_path: str):
         try:
-            # Read the CSV file
+            df = pd.read_csv(csv_path)
+            for _, row in df.iterrows():
+                expertise_str = row['Knowledge and Expertise']
+                if pd.isna(expertise_str):
+                    continue
+
+                # Clean and split expertise properly
+                expertise_list = [
+                    exp.strip() 
+                    for exp in expertise_str.split(',') 
+                    if exp and exp.strip()
+                ]
+
+                # Generate unique identifier from email
+                email = row.get('Contact Details', '')
+                expert_id = email.split('@')[0] if email else None
+
+                if expert_id and expertise_list:
+                    # Store expertise as array
+                    self.db.add_expert(
+                        orcid=expert_id,
+                        firstname=row['Firstname'],
+                        lastname=row['Lastname'],
+                        domains=[],
+                        fields=[],
+                        subfields=[],
+                        expertise=expertise_list  # This should now be clean
+                    )
+                    
+                    # Get categorized expertise using Gemini
+                    categorized = categorize_expertise(expertise_list)
+                    
+                    # Generate a unique identifier from email
+                    email = row.get('Contact Details', '')
+                    expert_id = email.split('@')[0] if email else None
+                    
+                    if expert_id and categorized:
+                        # Update expert record with expertise array
+                        self.db.add_expert(
+                            orcid=expert_id,
+                            firstname=row['Firstname'],
+                            lastname=row['Lastname'],
+                            domains=[],  # These will be populated from OpenAlex if available
+                            fields=[],
+                            subfields=[],
+                            expertise=expertise_list
+                        )
+                    
+                    # Add categorized expertise
+                    self.db.add_expertise_categories(expert_id, categorized)
+                    logger.info(f"Processed expertise for {row['Firstname']} {row['Lastname']}")
+
+        except Exception as e:
+            logger.error(f"Error processing expertise CSV: {e}")
+            raise
+
+    async def process_experts(self, csv_path: str):
+        try:
             df = pd.read_csv(csv_path)
             logger.info(f"Processing {len(df)} experts from {csv_path}")
 
-            # Create async session for processing works
             async with aiohttp.ClientSession() as session:
                 for _, row in df.iterrows():
                     firstname = row['Firstname']
                     lastname = row['Lastname']
                     
-                    logger.info(f"Processing expert: {firstname} {lastname}")
-                    
-                    # Get ORCID and OpenAlex ID
                     orcid, openalex_id = self.get_expert_openalex_data(firstname, lastname)
                     
                     if openalex_id:
-                        # Get domains, fields, and subfields
                         domains, fields, subfields = await self.get_expert_domains(
                             session, firstname, lastname, openalex_id
                         )
                         
-                        if orcid:  # Only add experts with ORCID
+                        if orcid:
+                            # Get existing expertise using the database manager
+                            cur = self.db.conn.cursor()
+                            cur.execute(
+                                "SELECT expertise FROM experts_ai WHERE orcid = %s",
+                                (orcid,)
+                            )
+                            result = cur.fetchone()
+                            existing_expertise = result[0] if result else []
+                            cur.close()
+
                             self.db.add_expert(
                                 orcid=orcid,
                                 firstname=firstname,
                                 lastname=lastname,
                                 domains=domains,
                                 fields=fields,
-                                subfields=subfields
+                                subfields=subfields,
+                                expertise=existing_expertise
                             )
                             logger.info(f"Successfully processed expert: {firstname} {lastname}")
                         else:
@@ -422,21 +531,22 @@ class OpenAlexProcessor:
 
         except Exception as e:
             logger.error(f"Error processing experts: {e}")
-            raise
+            raised
 
     def close(self):
-        """Close database connection and manager."""
         self.db.close()
 
 async def main():
     processor = OpenAlexProcessor()
     try:
-        # Process publications
+        # Process works
         processor.process_works(max_publications=4)
         
-        # Process experts
-        await processor.process_experts("sme.csv")
+        # Process expertise data first
+        await processor.process_expertise_csv("expertise.csv")
         
+        # Then process OpenAlex data
+        await processor.process_experts("sme.csv")
     except Exception as e:
         logger.error(f"Error in main process: {e}")
     finally:
