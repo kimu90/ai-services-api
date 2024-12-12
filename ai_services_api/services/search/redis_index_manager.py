@@ -88,7 +88,7 @@ class ExpertRedisIndexManager:
                     logger.warning("experts_expert table does not exist yet")
                     return []
                 
-                # Fetch all expert data
+                # Updated query to use only existing columns
                 cur.execute("""
                     SELECT 
                         id,
@@ -100,17 +100,12 @@ class ExpertRedisIndexManager:
                         updated_at,
                         bio,
                         orcid,
-                        fields,
-                        subfields,
-                        domains,
                         firstname,
                         lastname,
                         contact_details,
                         unit,
-                        normalized_domains,
-                        normalized_fields,
-                        normalized_skills,
-                        keywords
+                        designation,
+                        theme
                     FROM experts_expert
                     WHERE id IS NOT NULL
                 """)
@@ -118,24 +113,19 @@ class ExpertRedisIndexManager:
                 experts = [{
                     'id': row[0],
                     'email': row[1],
-                    'knowledge_expertise': row[2] if row[2] else [],
+                    'knowledge_expertise': self._parse_jsonb(row[2]),
                     'is_active': row[3],
                     'is_staff': row[4],
                     'created_at': row[5].isoformat() if row[5] else None,
                     'updated_at': row[6].isoformat() if row[6] else None,
                     'bio': row[7] or '',
                     'orcid': row[8],
-                    'fields': row[9] if row[9] else [],
-                    'subfields': row[10] if row[10] else [],
-                    'domains': row[11] if row[11] else [],
-                    'firstname': row[12] or '',
-                    'lastname': row[13] or '',
-                    'contact_details': row[14],
-                    'unit': row[15] or '',
-                    'normalized_domains': row[16] if row[16] else [],
-                    'normalized_fields': row[17] if row[17] else [],
-                    'normalized_skills': row[18] if row[18] else [],
-                    'keywords': row[19] if row[19] else []
+                    'firstname': row[9] or '',
+                    'lastname': row[10] or '',
+                    'contact_details': row[11],
+                    'unit': row[12] or '',
+                    'designation': row[13] or '',
+                    'theme': row[14] or ''
                 } for row in cur.fetchall()]
                 
                 logger.info(f"Fetched {len(experts)} experts from database")
@@ -153,6 +143,17 @@ class ExpertRedisIndexManager:
                     cur.close()
                 if conn:
                     conn.close()
+
+    def _parse_jsonb(self, data):
+        """Parse JSONB data safely."""
+        if not data:
+            return {}
+        try:
+            if isinstance(data, str):
+                return json.loads(data)
+            return data
+        except:
+            return {}
 
     def create_redis_index(self) -> bool:
         """Create Redis indexes for experts."""
@@ -190,21 +191,25 @@ class ExpertRedisIndexManager:
 
     def _create_text_content(self, expert: Dict[str, Any]) -> str:
         """Create combined text content for embedding."""
+        knowledge_expertise = expert['knowledge_expertise']
+        
         text_parts = [
             f"Name: {expert['firstname']} {expert['lastname']}",
             f"Email: {expert['email']}" if expert['email'] else "",
             f"Unit: {expert['unit']}" if expert['unit'] else "",
             f"Bio: {expert['bio']}" if expert['bio'] else "",
             f"ORCID: {expert['orcid']}" if expert['orcid'] else "",
-            f"Expertise: {' | '.join(expert['knowledge_expertise'])}",
-            f"Fields: {' | '.join(expert['fields'])}",
-            f"Subfields: {' | '.join(expert['subfields'])}",
-            f"Domains: {' | '.join(expert['domains'])}",
-            f"Normalized Domains: {' | '.join(expert['normalized_domains'])}",
-            f"Normalized Fields: {' | '.join(expert['normalized_fields'])}",
-            f"Technical Skills: {' | '.join(expert['normalized_skills'])}",
-            f"Keywords: {' | '.join(expert['keywords'])}"
+            f"Designation: {expert['designation']}" if expert['designation'] else "",
+            f"Theme: {expert['theme']}" if expert['theme'] else ""
         ]
+
+        # Add expertise information from knowledge_expertise JSONB
+        if isinstance(knowledge_expertise, dict):
+            for key, value in knowledge_expertise.items():
+                if value and isinstance(value, list):
+                    text_parts.append(f"{key.title()}: {' | '.join(value)}")
+                elif value and isinstance(value, str):
+                    text_parts.append(f"{key.title()}: {value}")
             
         return '\n'.join(filter(None, text_parts))
 
@@ -232,11 +237,9 @@ class ExpertRedisIndexManager:
                 'unit': expert['unit'],
                 'bio': expert['bio'],
                 'orcid': expert['orcid'],
+                'designation': expert['designation'],
+                'theme': expert['theme'],
                 'expertise': json.dumps(expert['knowledge_expertise']),
-                'fields': json.dumps(expert['fields']),
-                'domains': json.dumps(expert['domains']),
-                'normalized_skills': json.dumps(expert['normalized_skills']),
-                'keywords': json.dumps(expert['keywords']),
                 'is_active': json.dumps(expert['is_active']),
                 'updated_at': expert['updated_at']
             }
@@ -285,7 +288,7 @@ class ExpertRedisIndexManager:
             metadata = self.redis_text.hgetall(f"meta:expert:{expert_id}")
             if metadata:
                 # Parse JSON fields
-                for field in ['expertise', 'fields', 'domains', 'normalized_skills', 'keywords']:
+                for field in ['expertise', 'is_active']:
                     if metadata.get(field):
                         metadata[field] = json.loads(metadata[field])
                 return metadata

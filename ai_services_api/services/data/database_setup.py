@@ -1,3 +1,4 @@
+
 import os
 import psycopg2
 from psycopg2 import sql
@@ -73,21 +74,6 @@ def fix_experts_table():
         table_exists = cur.fetchone()[0]
         
         if table_exists:
-            # Original columns to add
-            columns_to_add = [
-                ('firstname', 'VARCHAR(255)'),
-                ('lastname', 'VARCHAR(255)'),
-                ('designation', 'VARCHAR(255)'),
-                ('theme', 'VARCHAR(255)'),
-                ('unit', 'VARCHAR(255)'),
-                ('contact_details', 'VARCHAR(255)'),
-                ('knowledge_expertise', 'JSONB'),
-                ('orcid', 'VARCHAR(255)'),
-                ('domains', 'TEXT[]'),  # Changed to TEXT[] for list support
-                ('fields', 'TEXT[]'),   # Changed to TEXT[] for list support
-                ('subfields', 'TEXT[]') # Changed to TEXT[] for list support
-            ]
-            
             # Add normalized expertise columns
             cur.execute("""
                 ALTER TABLE experts_expert
@@ -147,58 +133,6 @@ def fix_experts_table():
             """)
             logger.info("Updated existing rows to trigger search text generation")
 
-            # Add original columns if they don't exist
-            for column_name, column_type in columns_to_add:
-                cur.execute(f"""
-                    SELECT EXISTS (
-                        SELECT FROM information_schema.columns 
-                        WHERE table_name = 'experts_expert' AND column_name = %s
-                    );
-                """, (column_name,))
-                column_exists = cur.fetchone()[0]
-                if not column_exists:
-                    cur.execute(f"ALTER TABLE experts_expert ADD COLUMN {column_name} {column_type};")
-                    logger.info(f"Added '{column_name}' column to experts_expert table.")
-
-            # Handle existing data
-            cur.execute("""
-                UPDATE experts_expert
-                SET firstname = COALESCE(NULLIF(TRIM(firstname), ''), 'Unknown'),
-                    lastname = COALESCE(NULLIF(TRIM(lastname), ''), 'Unknown')
-                WHERE firstname IS NULL OR lastname IS NULL;
-            """)
-
-            # Handle duplicates
-            cur.execute("""
-                WITH duplicates AS (
-                    SELECT id, ROW_NUMBER() OVER (ORDER BY id) as row_num
-                    FROM experts_expert
-                    WHERE firstname = 'Unknown' AND lastname = 'Unknown'
-                )
-                UPDATE experts_expert
-                SET lastname = lastname || ' ' || duplicates.row_num
-                FROM duplicates
-                WHERE experts_expert.id = duplicates.id AND duplicates.row_num > 1;
-            """)
-            logger.info("Updated duplicate 'Unknown' entries.")
-
-            # Add unique constraint if it doesn't exist
-            cur.execute("""
-                SELECT EXISTS (
-                    SELECT FROM information_schema.table_constraints 
-                    WHERE table_name = 'experts_expert' 
-                    AND constraint_type = 'UNIQUE' 
-                    AND constraint_name = 'experts_expert_firstname_lastname_key'
-                );
-            """)
-            unique_constraint_exists = cur.fetchone()[0]
-            if not unique_constraint_exists:
-                cur.execute("""
-                    ALTER TABLE experts_expert
-                    ADD CONSTRAINT experts_expert_firstname_lastname_key UNIQUE (firstname, lastname);
-                """)
-                logger.info("Added unique constraint on firstname and lastname.")
-
             conn.commit()
             logger.info("Fixed experts_expert table structure and handled all columns and indexes.")
         else:
@@ -218,6 +152,7 @@ def create_tables():
     try:
         cur.execute("CREATE EXTENSION IF NOT EXISTS \"uuid-ossp\";")
         cur.execute("""
+            -- Existing tables
             CREATE TABLE IF NOT EXISTS experts_expert (
                 id SERIAL PRIMARY KEY,
                 firstname VARCHAR(255) NOT NULL,
@@ -227,45 +162,146 @@ def create_tables():
                 unit VARCHAR(255),
                 contact_details VARCHAR(255),
                 knowledge_expertise JSONB,
-                orcid VARCHAR(255) UNIQUE,
-                domains TEXT[],                -- Changed from JSONB to TEXT[] (array of text)
-                fields TEXT[],                 -- Changed from JSONB to TEXT[] (array of text)
-                subfields TEXT[],              -- Changed from JSONB to TEXT[] (array of text)
-                password VARCHAR(255) ,
-                UNIQUE (firstname, lastname)
+                orcid VARCHAR(255),
+                domains TEXT[],
+                fields TEXT[],
+                subfields TEXT[],
+                password VARCHAR(255),
+                is_superuser BOOLEAN DEFAULT FALSE,
+                is_staff BOOLEAN DEFAULT FALSE,
+                is_active BOOLEAN DEFAULT TRUE,
+                last_login TIMESTAMP WITH TIME ZONE,
+                date_joined TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+                created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+                bio TEXT,
+                email VARCHAR(200),
+                middle_name VARCHAR(200)
             );
 
             CREATE TABLE IF NOT EXISTS resources_resource (
-                doi VARCHAR(255) PRIMARY KEY,
+                id SERIAL PRIMARY KEY,
+                doi VARCHAR(255),
                 title TEXT NOT NULL,
                 abstract TEXT,
                 summary TEXT,
                 authors TEXT[],
                 description TEXT,
-                expert_id INTEGER REFERENCES experts_expert(id)
+                expert_id INTEGER,
+                type VARCHAR(100),
+                subtitles JSONB,
+                publishers JSONB,
+                collection VARCHAR(255),
+                date_issue VARCHAR(255),
+                citation VARCHAR(255),
+                language VARCHAR(255),
+                identifiers JSONB,
+                created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
             );
+
+            -- New tables from the dump
+            CREATE TABLE IF NOT EXISTS auth_group (
+                id SERIAL PRIMARY KEY,
+                name VARCHAR(150)
+            );
+
+            CREATE TABLE IF NOT EXISTS auth_permission (
+                id SERIAL PRIMARY KEY,
+                name VARCHAR(255),
+                content_type_id INTEGER,
+                codename VARCHAR(100)
+            );
+
+            CREATE TABLE IF NOT EXISTS author_publication_ai (
+                author_id INTEGER,
+                doi VARCHAR(255)
+            );
+
+            CREATE TABLE IF NOT EXISTS authors_ai (
+                author_id SERIAL PRIMARY KEY,
+                name TEXT,
+                orcid VARCHAR(255),
+                author_identifier VARCHAR(255)
+            );
+
+            CREATE TABLE IF NOT EXISTS chat_chatbox (
+                id SERIAL PRIMARY KEY,
+                created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+                expert_from_id INTEGER,
+                expert_to_id INTEGER,
+                name VARCHAR(200)
+            );
+
+            CREATE TABLE IF NOT EXISTS chat_chatboxmessage (
+                id SERIAL PRIMARY KEY,
+                message TEXT,
+                read BOOLEAN DEFAULT FALSE,
+                created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+                expert_from_id INTEGER,
+                expert_to_id INTEGER,
+                chatbox_id INTEGER
+            );
+
+            CREATE TABLE IF NOT EXISTS expertise_categories (
+                id SERIAL PRIMARY KEY,
+                expert_orcid TEXT,
+                original_term TEXT,
+                domain TEXT,
+                field TEXT,
+                subfield TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+
+            CREATE TABLE IF NOT EXISTS publications_ai (
+                doi VARCHAR(255) PRIMARY KEY,
+                title TEXT,
+                abstract TEXT,
+                summary TEXT
+            );
+
+            CREATE TABLE IF NOT EXISTS roles_role (
+                id SERIAL PRIMARY KEY,
+                name VARCHAR(255),
+                description VARCHAR(255),
+                active BOOLEAN DEFAULT TRUE,
+                permissions JSONB,
+                created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+                default_expert_role BOOLEAN DEFAULT FALSE
+            );
+
             CREATE TABLE IF NOT EXISTS tags (
                 tag_id SERIAL PRIMARY KEY,
-                tag_name VARCHAR(255) UNIQUE NOT NULL
+                tag_name VARCHAR(255)
             );
+
             CREATE TABLE IF NOT EXISTS query_history_ai (
                 query_id SERIAL PRIMARY KEY,
-                query TEXT NOT NULL,
+                query TEXT,
                 timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 result_count INTEGER,
                 search_type VARCHAR(50),
                 user_id TEXT
             );
+
             CREATE TABLE IF NOT EXISTS term_frequencies (
-                term VARCHAR(255),
+                term VARCHAR(255) PRIMARY KEY,
                 frequency INTEGER DEFAULT 1,
-                expert_id INTEGER REFERENCES experts_expert(id),
-                last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                PRIMARY KEY (term)
+                expert_id INTEGER,
+                last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
+
+            -- Create basic indexes
             CREATE INDEX IF NOT EXISTS idx_experts_name ON experts_expert (firstname, lastname);
             CREATE INDEX IF NOT EXISTS idx_query_history_timestamp ON query_history_ai (timestamp DESC);
             CREATE INDEX IF NOT EXISTS idx_query_history_user ON query_history_ai (user_id);
+            CREATE INDEX IF NOT EXISTS idx_chat_updated ON chat_chatbox (updated_at DESC);
+            CREATE INDEX IF NOT EXISTS idx_chat_message_created ON chat_chatboxmessage (created_at DESC);
+            CREATE INDEX IF NOT EXISTS idx_expertise_orcid ON expertise_categories (expert_orcid);
+            CREATE INDEX IF NOT EXISTS idx_publications_title ON publications_ai USING gin(to_tsvector('english', title));
         """)
         conn.commit()
         logger.info("All tables created successfully")
@@ -302,7 +338,7 @@ def load_initial_experts(expertise_csv: str):
                 RETURNING id
             """, (
                 firstname, lastname, designation, theme, unit, contact_details,
-                prepare_array_or_jsonb(expertise_list, column_types['knowledge_expertise'] == 'jsonb')
+                json.dumps(expertise_list) if expertise_list else None
             ))
             conn.commit()
             logger.info(f"Added/updated expert data for {firstname} {lastname}")
@@ -317,4 +353,4 @@ if __name__ == "__main__":
     create_database_if_not_exists()
     create_tables()
     fix_experts_table()
-    load_initial_experts('expertise.csv')
+

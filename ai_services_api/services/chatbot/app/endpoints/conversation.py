@@ -11,12 +11,16 @@ from slowapi.util import get_remote_address
 
 class ChatRequest(BaseModel):
     query: str
+    user_id: str
+    session_id: Optional[str] = None
     conversation_id: Optional[str] = None
     context: Optional[dict] = None
 
 class ChatResponse(BaseModel):
     response: str
     timestamp: datetime
+    user_id: str
+    session_id: Optional[str]
 
 router = APIRouter()
 limiter = Limiter(key_func=get_remote_address)
@@ -35,26 +39,15 @@ async def chat_with_model(
     chat_request: ChatRequest,
     background_tasks: BackgroundTasks
 ):
-    """
-    Handle chat requests and return responses.
-    
-    Args:
-        request: FastAPI request object
-        chat_request: The chat request containing the query
-        background_tasks: FastAPI background tasks handler
-    
-    Returns:
-        JSON response containing the chatbot's response
-    """
     global last_response
     
     try:
-        # Initialize response collection
         response_parts = []
         
-        # Process message with streaming
         async for part in message_handler.send_message_async(
             chat_request.query,
+            user_id=chat_request.user_id,
+            session_id=chat_request.session_id,
             conversation_id=chat_request.conversation_id,
             context=chat_request.context
         ):
@@ -62,13 +55,18 @@ async def chat_with_model(
                 part = part.decode('utf-8')
             response_parts.append(part)
         
-        # Combine response parts
         complete_response = ''.join(response_parts)
-        last_response = complete_response
+        last_response = {
+            'response': complete_response,
+            'user_id': chat_request.user_id,
+            'session_id': chat_request.session_id
+        }
         
         return ChatResponse(
             response=complete_response,
-            timestamp=datetime.now()
+            timestamp=datetime.now(),
+            user_id=chat_request.user_id,
+            session_id=chat_request.session_id
         )
         
     except Exception as e:

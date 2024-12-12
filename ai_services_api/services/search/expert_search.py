@@ -94,7 +94,7 @@ class ExpertSearchIndexManager:
                             continue
                         return []
                     
-                    # Fetch expert data - now including is_active
+                    # Updated query to use the actual columns
                     cur.execute("""
                         SELECT 
                             id,
@@ -106,19 +106,39 @@ class ExpertSearchIndexManager:
                             contact_details,
                             knowledge_expertise,
                             orcid,
-                            domains,
-                            fields,
-                            subfields,
-                            is_active
+                            COALESCE(knowledge_expertise->>'domains', '[]') as domains,
+                            COALESCE(knowledge_expertise->>'fields', '[]') as fields,
+                            COALESCE(knowledge_expertise->>'subfields', '[]') as subfields,
+                            search_text
                         FROM experts_expert
                         WHERE id IS NOT NULL
-                        AND is_active = true  -- Only fetch active experts
                     """)
                     rows = cur.fetchall()
                     
                     experts = []
                     for row in rows:
                         try:
+                            # Parse JSON strings from knowledge_expertise if they exist
+                            try:
+                                knowledge_expertise = json.loads(row[7]) if row[7] else {}
+                            except:
+                                knowledge_expertise = []
+                                
+                            try:
+                                domains = json.loads(row[9]) if row[9] else []
+                            except:
+                                domains = []
+                                
+                            try:
+                                fields = json.loads(row[10]) if row[10] else []
+                            except:
+                                fields = []
+                                
+                            try:
+                                subfields = json.loads(row[11]) if row[11] else []
+                            except:
+                                subfields = []
+
                             expert = {
                                 'id': row[0],
                                 'name': f"{row[1]} {row[2]}",
@@ -127,17 +147,18 @@ class ExpertSearchIndexManager:
                                 'unit': row[5] or '',
                                 'contact': row[6] or '',
                                 'specialties': {
-                                    'expertise': row[7] if isinstance(row[7], list) else json.loads(row[7]) if row[7] else [],
-                                    'domains': row[9] if row[9] else [],
-                                    'fields': row[10] if row[10] else [],
-                                    'subfields': row[11] if row[11] else []
+                                    'expertise': knowledge_expertise if isinstance(knowledge_expertise, list) else [],
+                                    'domains': domains,
+                                    'fields': fields,
+                                    'subfields': subfields
                                 },
                                 'orcid': row[8],
-                                'is_active': row[12]
+                                'search_text': row[12] or ''
                             }
                             experts.append(expert)
                         except Exception as e:
                             logger.error(f"Error processing expert data: {e}")
+                            continue
                     
                     return experts
                     
@@ -160,12 +181,10 @@ class ExpertSearchIndexManager:
             f"Designation: {expert['designation']}",
             f"Theme: {expert['theme']}",
             f"Unit: {expert['unit']}",
-            f"Contact: {expert['contact']}",  # Added contact details
-            f"Expertise: {' | '.join(specialties['expertise'])}",
-            f"Domains: {' | '.join(specialties['domains'])}",
-            f"Fields: {' | '.join(specialties['fields'])}",
-            f"Subfields: {' | '.join(specialties['subfields'])}",
-            f"Status: {'Active' if expert['is_active'] else 'Inactive'}"  # Added active status
+            f"Expertise: {' | '.join(specialties.get('expertise', []))}",
+            f"Domains: {' | '.join(specialties.get('domains', []))}",
+            f"Fields: {' | '.join(specialties.get('fields', []))}",
+            f"Subfields: {' | '.join(specialties.get('subfields', []))}"
         ]
         return '\n'.join(text_parts)
 
@@ -200,9 +219,7 @@ class ExpertSearchIndexManager:
                         'designation': expert['designation'],
                         'theme': expert['theme'],
                         'unit': expert['unit'],
-                        'contact': expert['contact'],  # Added contact to metadata
-                        'specialties': expert['specialties'],
-                        'is_active': expert['is_active']  # Added active status to metadata
+                        'specialties': expert['specialties']
                     }
                 )
                 
@@ -221,14 +238,13 @@ class ExpertSearchIndexManager:
             logger.error(f"Error creating FAISS index: {e}")
             return False
 
-    def search_experts(self, query: str, k: int = 5, active_only: bool = True) -> List[Dict[str, Any]]:
+    def search_experts(self, query: str, k: int = 5) -> List[Dict[str, Any]]:
         """
         Search for similar experts using the index.
         
         Args:
             query (str): Search query
             k (int): Number of results to return
-            active_only (bool): Whether to return only active experts
             
         Returns:
             List of expert matches with metadata
@@ -242,9 +258,8 @@ class ExpertSearchIndexManager:
             # Generate query embedding
             query_embedding = self.model.encode([query], convert_to_numpy=True)
             
-            # Search index with extra results to account for filtering
-            extra_k = k * 2 if active_only else k
-            distances, indices = index.search(query_embedding.astype(np.float32), extra_k)
+            # Search index
+            distances, indices = index.search(query_embedding.astype(np.float32), k)
             
             # Fetch results from Redis
             results = []
@@ -257,17 +272,8 @@ class ExpertSearchIndexManager:
                 
                 if expert_data:
                     metadata = json.loads(expert_data[b'metadata'].decode())
-                    
-                    # Filter active/inactive experts
-                    if active_only and not metadata.get('is_active', False):
-                        continue
-                        
                     metadata['score'] = float(1 / (1 + distances[0][i]))  # Convert distance to similarity score
                     results.append(metadata)
-                    
-                    # Break if we have enough results after filtering
-                    if len(results) >= k:
-                        break
             
             return results
 

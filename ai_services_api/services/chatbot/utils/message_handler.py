@@ -11,6 +11,8 @@ class MessageHandler:
     async def send_message_async(
         self, 
         message: str,
+        user_id: str,
+        session_id: Optional[str] = None,
         conversation_id: Optional[str] = None,
         context: Optional[Dict] = None
     ) -> AsyncIterable[str]:
@@ -19,6 +21,8 @@ class MessageHandler:
         
         Args:
             message: The user input message
+            user_id: The unique identifier for the user
+            session_id: Optional ID for the current session
             conversation_id: Optional ID to track conversation history
             context: Optional additional context
             
@@ -26,13 +30,17 @@ class MessageHandler:
             Async generator that yields response tokens from the LLM
         """
         try:
+            # Generate response using only the message parameter
             async for token in self.llm_manager.generate_async_response(message):
+                # Ensure token is string, not bytes
+                if isinstance(token, bytes):
+                    token = token.decode('utf-8', errors='replace')
                 yield token
                 
         except Exception as e:
-            logger.error(f"Error in send_message_async: {e}")
+            logger.error(f"Error in send_message_async: {e}", exc_info=True)
             error_message = "I apologize, but I encountered an error. Please try again."
-            yield error_message.encode("utf-8", errors="replace")
+            yield error_message
     
     async def flush_conversation_cache(self, conversation_id: str):
         """
@@ -40,6 +48,9 @@ class MessageHandler:
         
         Args:
             conversation_id: The unique identifier for the conversation
+        
+        Raises:
+            RuntimeError: If clearing the conversation history fails
         """
         try:
             memory = self.llm_manager.create_memory()
@@ -48,4 +59,4 @@ class MessageHandler:
             
         except Exception as e:
             logger.error(f"Error while flushing conversation cache for ID {conversation_id}: {e}")
-            raise RuntimeError("Failed to clear conversation history.") from e
+            raise RuntimeError(f"Failed to clear conversation history: {str(e)}")
