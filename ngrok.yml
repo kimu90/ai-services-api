@@ -1,0 +1,7 @@
+version: "2"
+authtoken: "2mcb1MFE6r7cKVvuGKDKhRaZT37_2nzuGDuwajvaLx3JSFYkG"
+tunnels:
+  dashboard:
+    proto: http
+    addr: 8501
+    inspect: false

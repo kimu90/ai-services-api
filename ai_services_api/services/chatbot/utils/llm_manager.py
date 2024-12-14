@@ -5,7 +5,7 @@ import numpy as np
 import re
 from datetime import datetime
 import time
-from typing import AsyncIterable, List, Dict, Tuple, Optional
+from typing import AsyncIterable, List, Dict, Tuple, Optional, Any
 from enum import Enum
 from sentence_transformers import SentenceTransformer
 from langchain.schema.messages import HumanMessage, SystemMessage
@@ -14,7 +14,7 @@ from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain.callbacks import AsyncIteratorCallbackHandler
 import redis
 from dotenv import load_dotenv
-
+from .db_utils import DatabaseConnector
 # Load environment variables
 load_dotenv()
 
@@ -34,7 +34,8 @@ class GeminiLLMManager:
         self.redis_url = os.getenv("REDIS_URL", "redis://localhost:6379")
         self.callback = AsyncIteratorCallbackHandler()
         self.confidence_threshold = 0.6
-        
+        self.db_connector = DatabaseConnector()
+        self.db_conn = self.db_connector.get_connection()
         # Initialize context management
         self.context_window = []
         self.max_context_items = 5
@@ -370,80 +371,92 @@ class GeminiLLMManager:
         
         return cleaned
 
-    async def generate_async_response(self, message: str) -> AsyncIterable[str]:
-        """Generate async response with improved formatting and buffering."""
-        model = self.get_gemini_model()
-        memory = self.create_memory()
-        chat_memory = memory.load_memory_variables({})
-        history = chat_memory.get("chat_history", [])
-
-        # Process message
-        message = self.handle_follow_up(message)
-        intent, confidence = self.detect_intent(message)
-        query_vector = self.get_vector_from_message(message)
-        relevant_data = self.query_redis_data(query_vector, intent)
-        
-        # Create and manage context
-        context = self.create_context(relevant_data)
-        self.manage_context_window({'text': context, 'query': message})
-
-        # Prepare system instruction based on intent
-        system_instruction = (
-            "I am an AI assistant specializing in providing information about APHRC experts and their work. "
-            f"The user's query appears to be related to {intent.value}. Based on our expert database:\n{context}"
-        )
-
-        # Prepare messages
-        message_list = [SystemMessage(content=system_instruction)]
-
-        if history:
-            message_list.extend(history)
-
-        message_list.append(HumanMessage(content=message))
+    async def generate_async_response(self, message: str) -> AsyncIterable[Dict[str, Any]]:
+        """Generate async response with database tracking."""
+        start_time = time.time()
         
         try:
-            # Initialize response tracking
-            response = ""
-            buffer = ""
-            max_response_length = 800  # Increased for expert responses
-            sentence_end_chars = {'.', '!', '?'}
+            # Process message and detect intent
+            message = self.handle_follow_up(message)
+            intent, confidence = self.detect_intent(message)
+            query_vector = self.get_vector_from_message(message)
+            relevant_data = self.query_redis_data(query_vector, intent)
             
-            async for token in model.astream(input=message_list):
+            # Create context
+            context = self.create_context(relevant_data)
+            self.manage_context_window({'text': context, 'query': message})
+            
+            # Track expert matches for analytics
+            expert_matches = []
+            for data in relevant_data:
+                expert_matches.append({
+                    'expert_id': data['metadata'].get('id'),
+                    'similarity_score': data['similarity'],
+                    'rank_position': len(expert_matches) + 1
+                })
+
+            # Generate response
+            response_chunks = []
+            buffer = ""
+            
+            async for token in self.get_gemini_model().astream(input=message):
                 if not token.content:
                     continue
                     
                 buffer += token.content
-                
-                # Check if we have a complete chunk
-                should_yield = (
-                    any(char in buffer for char in sentence_end_chars) or
-                    len(buffer) >= 100 or
-                    '\n' in buffer
-                )
-                
-                if should_yield:
+                if self.should_yield_buffer(buffer):
                     formatted_chunk = self.format_response(buffer)
-                    response += formatted_chunk
-                    
-                    if len(response) >= max_response_length:
-                        yield formatted_chunk.encode("utf-8", errors="replace")
-                        break
-                        
-                    yield formatted_chunk.encode("utf-8", errors="replace")
+                    response_chunks.append(formatted_chunk)
+                    # Yield both the chunk and metadata
+                    yield {
+                        'chunk': formatted_chunk.encode("utf-8", errors="replace"),
+                        'is_metadata': False
+                    }
                     buffer = ""
             
-            # Yield any remaining content in buffer
+            # Handle remaining buffer
             if buffer:
                 formatted_chunk = self.format_response(buffer)
-                yield formatted_chunk.encode("utf-8", errors="replace")
-                
+                response_chunks.append(formatted_chunk)
+                yield {
+                    'chunk': formatted_chunk.encode("utf-8", errors="replace"),
+                    'is_metadata': False
+                }
+
+            # Yield final metadata
+            yield {
+                'is_metadata': True,
+                'metadata': {
+                    'response': ''.join(response_chunks),
+                    'intent_type': intent.value,
+                    'intent_confidence': confidence,
+                    'expert_matches': expert_matches,
+                    'response_time': time.time() - start_time,
+                    'error_occurred': False
+                }
+            }
+            
         except Exception as e:
             logger.error(f"Error generating response: {e}")
             error_message = self.format_response(
-                "I apologize, but I encountered an error while retrieving expert information. Please try rephrasing your question."
+                "I apologize, but I encountered an error. Please try again."
             )
-            yield error_message.encode("utf-8", errors="replace")
-
+            yield {
+                'chunk': error_message.encode("utf-8", errors="replace"),
+                'is_metadata': False
+            }
+            
+            yield {
+                'is_metadata': True,
+                'metadata': {
+                    'response': error_message,
+                    'intent_type': None,
+                    'intent_confidence': 0.0,
+                    'expert_matches': [],
+                    'response_time': time.time() - start_time,
+                    'error_occurred': True
+                }
+            }
     def get_gemini_model(self):
         """Initialize and return the Gemini model."""
         return ChatGoogleGenerativeAI(
@@ -472,5 +485,12 @@ class GeminiLLMManager:
                 self.redis_text.close()
             if hasattr(self, 'redis_binary'):
                 self.redis_binary.close()
+            if hasattr(self, 'db_conn'):
+                self.db_conn.close()
         except:
             pass
+
+    def should_yield_buffer(self, buffer: str) -> bool:
+        """Determine if the buffer should be yielded."""
+        return len(buffer) >= 100 or '.' in buffer or '\n' in buffer
+

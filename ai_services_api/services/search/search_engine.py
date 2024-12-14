@@ -1,18 +1,19 @@
+
 import faiss
 import pickle
 import os
+import json
 import logging
 import numpy as np
 from pathlib import Path
-from typing import List, Dict, Optional, Any
-from datetime import datetime
-from ai_services_api.services.search.embedding_model import EmbeddingModel
-from ai_services_api.services.search.cache_manager import CacheManager
-from ai_services_api.services.search.database_manager import DatabaseManager
-from ai_services_api.services.search.ml_predictor import MLPredictor
+from typing import List, Dict, Optional, Any, Union
+from datetime import datetime, timedelta
 
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s: %(message)s')
-logger = logging.getLogger(__name__)
+# database and analytics
+from ai_services_api.services.search.database_manager import DatabaseManager
+from ai_services_api.services.search.cache_manager import CacheManager
+from ai_services_api.services.search.embedding_model import EmbeddingModel
+from ai_services_api.services.search.ml_predictor import MLPredictor
 
 class SearchEngine:
     def __init__(self):
@@ -20,6 +21,7 @@ class SearchEngine:
             logger.info("Initializing Production SearchEngine...")
             self._init_components()
             self._load_models()
+            self.current_session = None
             logger.info("Production SearchEngine initialized successfully")
         except Exception as e:
             logger.error(f"Error initializing SearchEngine: {e}")
@@ -52,6 +54,221 @@ class SearchEngine:
             logger.error(f"Error initializing components: {e}")
             raise
 
+    def _start_search_session(self, user_id: str):
+        """Start a new search session for the user"""
+        try:
+            query = """
+                INSERT INTO search_sessions (user_id)
+                VALUES (%s)
+                RETURNING id;
+            """
+            session_id = self.db.execute_query(query, (user_id,), fetch_one=True)[0]
+            self.current_session = {
+                'id': session_id,
+                'user_id': user_id,
+                'start_time': datetime.utcnow()
+            }
+        except Exception as e:
+            logger.error(f"Error starting search session: {e}")
+
+    def _update_search_session(self, success: bool = True):
+        """Update the current search session metrics"""
+        if not self.current_session:
+            return
+
+        try:
+            query = """
+                UPDATE search_sessions 
+                SET query_count = query_count + 1,
+                    successful_searches = successful_searches + %s
+                WHERE id = %s;
+            """
+            self.db.execute_query(query, (1 if success else 0, self.current_session['id']))
+        except Exception as e:
+            logger.error(f"Error updating search session: {e}")
+
+    def search(self, query: str, k: int = 5, user_id: Optional[str] = None, 
+               search_type: str = 'general', filters: Optional[Dict] = None) -> List[Dict]:
+        start_time = datetime.utcnow()
+        try:
+            logger.info(f"Searching for: {query}")
+            
+            # Start or update session
+            if user_id:
+                if not self.current_session or self.current_session['user_id'] != user_id:
+                    self._start_search_session(user_id)
+            
+            # Check cache first
+            cache_key = f"search_{query}_{k}_{user_id}"
+            cached_result = self.cache.get(cache_key)
+            if cached_result:
+                self._log_search(query, user_id, start_time, len(cached_result), 
+                               search_type, True, filters)
+                return cached_result
+            
+            # Generate query embedding and search
+            query_vector = self.embedding_model.get_embedding(query)
+            num_candidates = min(k * 2, self.index.ntotal)
+            distances, indices = self.index.search(query_vector, num_candidates)
+            
+            # Process results
+            results = self._process_results(indices[0], distances[0])
+            
+            # Apply personalization
+            if user_id:
+                results = self._personalize_results(results, user_id)
+            
+            # Cache results
+            final_results = results[:k]
+            self.cache.set(cache_key, final_results, expire=300)
+            
+            # Log search
+            self._log_search(query, user_id, start_time, len(final_results), 
+                           search_type, True, filters)
+            
+            # Update session
+            self._update_search_session(True)
+            
+            return final_results
+            
+        except Exception as e:
+            logger.error(f"Error during search: {e}")
+            self._log_search(query, user_id, start_time, 0, search_type, False, filters)
+            self._update_search_session(False)
+            raise
+
+    def _log_search(self, query: str, user_id: Optional[str], 
+                   start_time: datetime, result_count: int,
+                   search_type: str, success: bool, filters: Optional[Dict]):
+        """Log search details to the database"""
+        try:
+            response_time = datetime.utcnow() - start_time
+            
+            query = """
+                INSERT INTO search_logs 
+                (query, user_id, response_time, result_count, search_type, 
+                 success_rate, filters)
+                VALUES (%s, %s, %s, %s, %s, %s, %s)
+                RETURNING id;
+            """
+            params = (
+                query, user_id, response_time, result_count, search_type,
+                1.0 if success else 0.0, json.dumps(filters) if filters else None
+            )
+            search_id = self.db.execute_query(query, params, fetch_one=True)[0]
+            
+            # Log performance metrics
+            self._update_performance_metrics(response_time)
+            
+            return search_id
+        except Exception as e:
+            logger.error(f"Error logging search: {e}")
+
+    def _update_performance_metrics(self, response_time: timedelta):
+        """Update search performance metrics"""
+        try:
+            current_time = datetime.utcnow()
+            hour_start = current_time.replace(minute=0, second=0, microsecond=0)
+            
+            query = """
+                INSERT INTO search_performance 
+                (timestamp, avg_response_time, cache_hit_rate, error_rate, 
+                 total_queries, unique_users)
+                VALUES (%s, %s, %s, %s, %s, %s)
+                ON CONFLICT (DATE_TRUNC('hour', timestamp))
+                DO UPDATE SET
+                    avg_response_time = (search_performance.avg_response_time * 
+                                       search_performance.total_queries + %s) / 
+                                      (search_performance.total_queries + 1),
+                    total_queries = search_performance.total_queries + 1;
+            """
+            
+            cache_hit_rate = self.cache.get_hit_rate()
+            error_rate = self._calculate_error_rate()
+            
+            params = (
+                hour_start, response_time, cache_hit_rate, error_rate, 
+                1, 1, response_time
+            )
+            self.db.execute_query(query, params)
+        except Exception as e:
+            logger.error(f"Error updating performance metrics: {e}")
+
+    def predict_queries(self, partial_query: str, limit: int = 5, 
+                       user_id: Optional[str] = None) -> List[str]:
+        try:
+            predictions = super().predict_queries(partial_query, limit, 
+                                               {'user_id': user_id})
+            
+            # Log predictions
+            self._log_predictions(partial_query, predictions, user_id)
+            
+            return predictions
+        except Exception as e:
+            logger.error(f"Error in predict_queries: {e}")
+            return []
+
+    def _log_predictions(self, partial_query: str, predictions: List[str], 
+                        user_id: Optional[str]):
+        """Log query predictions"""
+        try:
+            query = """
+                INSERT INTO query_predictions 
+                (partial_query, predicted_query, confidence_score, user_id)
+                VALUES (%s, %s, %s, %s);
+            """
+            
+            for pred in predictions:
+                confidence = self._calculate_prediction_score(
+                    pred, partial_query, user_id, 
+                    self.embedding_model.get_embedding(partial_query)
+                )
+                params = (partial_query, pred, confidence, user_id)
+                self.db.execute_query(query, params)
+                
+        except Exception as e:
+            logger.error(f"Error logging predictions: {e}")
+
+    def log_click(self, search_id: int, result_index: int, 
+                  expert_id: Optional[str] = None):
+        """Log when a user clicks on a search result"""
+        try:
+            # Update search_logs
+            query = """
+                UPDATE search_logs 
+                SET clicked = TRUE 
+                WHERE id = %s;
+            """
+            self.db.execute_query(query, (search_id,))
+            
+            # If expert result, log to expert_searches
+            if expert_id:
+                query = """
+                    INSERT INTO expert_searches 
+                    (search_id, expert_id, rank_position, clicked, click_timestamp)
+                    VALUES (%s, %s, %s, TRUE, CURRENT_TIMESTAMP);
+                """
+                self.db.execute_query(query, (search_id, expert_id, result_index))
+                
+        except Exception as e:
+            logger.error(f"Error logging click: {e}")
+
+    def _calculate_error_rate(self) -> float:
+        """Calculate current error rate from recent searches"""
+        try:
+            query = """
+                SELECT COUNT(*) as total,
+                       SUM(CASE WHEN success_rate = 0 THEN 1 ELSE 0 END) as errors
+                FROM search_logs
+                WHERE timestamp > NOW() - INTERVAL '1 hour';
+            """
+            result = self.db.execute_query(query, fetch_one=True)
+            total, errors = result
+            return errors / total if total > 0 else 0.0
+        except Exception as e:
+            logger.error(f"Error calculating error rate: {e}")
+            return 0.0
+
     def _load_models(self):
         try:
             current_dir = Path(os.path.dirname(os.path.abspath(__file__)))
@@ -73,88 +290,6 @@ class SearchEngine:
         except Exception as e:
             logger.error(f"Error loading models: {e}")
             raise
-
-    def search(self, query: str, k: int = 5, user_id: Optional[str] = None) -> List[Dict]:
-        try:
-            logger.info(f"Searching for: {query}")
-            
-            # Check cache first
-            cache_key = f"search_{query}_{k}_{user_id}"
-            cached_result = self.cache.get(cache_key)
-            if cached_result:
-                return cached_result
-            
-            # Update query history
-            self._update_query_history(query, user_id)
-            
-            # Generate query embedding
-            query_vector = self.embedding_model.get_embedding(query)
-            
-            # Search FAISS index
-            num_candidates = min(k * 2, self.index.ntotal)
-            distances, indices = self.index.search(query_vector, num_candidates)
-            
-            # Process results
-            results = self._process_results(indices[0], distances[0])
-            
-            # Apply personalization
-            if user_id:
-                results = self._personalize_results(results, user_id)
-            
-            # Cache results
-            final_results = results[:k]
-            self.cache.set(cache_key, final_results, expire=300)
-            
-            logger.info(f"Found {len(final_results)} results")
-            return final_results
-            
-        except Exception as e:
-            logger.error(f"Error during search: {e}")
-            raise
-
-    def predict_queries(self, 
-                   partial_query: str, 
-                   limit: int = 5, 
-                   context: Optional[Dict[str, Any]] = None) -> List[str]:
-        try:
-            if not partial_query or len(partial_query) < 2:
-                return []
-
-            # Check cache with shorter expiration for predictions
-            cache_key = f"pred_{partial_query}_{limit}_{context.get('user_id', '')}"
-            cached_result = self.cache.get(cache_key)
-            if cached_result:
-                return cached_result
-
-            predictions = set()
-            
-            # Get predictions from ML predictor first (fast)
-            ml_predictions = self.ml_predictor.predict(
-                partial_query, 
-                context,
-                limit=limit
-            )
-            predictions.update(ml_predictions)
-
-            # If we don't have enough predictions, get from database
-            if len(predictions) < limit:
-                db_predictions = self.db.get_matching_queries(
-                    partial_query, 
-                    limit=limit - len(predictions)
-                )
-                predictions.update(db_predictions)
-
-            # Convert to list and limit results
-            results = list(predictions)[:limit]
-            
-            # Cache results for a short time
-            self.cache.set(cache_key, results, expire=60)  # Cache for 1 minute
-
-            return results
-
-        except Exception as e:
-            logger.error(f"Error predicting queries: {e}")
-            return []
 
     def _calculate_prediction_score(self, 
                                  prediction: str, 
@@ -254,7 +389,6 @@ class SearchEngine:
             return results
         except Exception as e:
             logger.error(f"Error in personalization: {e}")
-            return results
 
     def _update_query_history(self, query: str, user_id: Optional[str] = None):
         try:
@@ -289,4 +423,3 @@ class SearchEngine:
             self.db.update_user_preferences(user_id, relevant_docs)
             logger.info(f"Updated preferences for user {user_id}")
         except Exception as e:
-            logger.error(f"Error updating user preferences: {e}")

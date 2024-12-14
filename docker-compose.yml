@@ -163,6 +163,35 @@ services:
       postgres:
         condition: service_healthy
 
+  dashboard:
+    build: . 
+    ports:
+      - "8501:8501"
+    command: streamlit run /code/ai_services_api/services/search/app.py
+    volumes:
+      - ./:/code:rw
+      - ./logs/dashboard:/code/logs:rw
+    environment: 
+      - POSTGRES_HOST=postgres
+      - POSTGRES_DB=${POSTGRES_DB:-aphrc}
+      - POSTGRES_USER=${POSTGRES_USER:-postgres}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-p0stgres}
+      - DATABASE_URL=postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres/${POSTGRES_DB}
+      - DOCKER_ENV=true
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - aphrc-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8501/_stcore/health"]
+      interval: 50s
+      timeout: 10s
+      retries: 3
+      start_period: 100s
+    user: "${UID:-1001}:${GID:-125}"
+    restart: unless-stopped
+
   # Airflow Services (Commented out for development)
   # To enable, remove the "#" from the following sections
   

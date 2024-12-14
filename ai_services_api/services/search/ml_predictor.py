@@ -1,28 +1,38 @@
 import logging
 from typing import List, Dict, Optional, Any
-import numpy as np
 from collections import defaultdict
-import re
 from datetime import datetime, timedelta
+from ai_services_api.services.data.database_setup import get_db_connection
 
 logger = logging.getLogger(__name__)
 
 class MLPredictor:
     def __init__(self):
-        # Prefix tree for fast prefix matching
-        self.prefix_tree = {}
-        # Frequency dictionary for each query
-        self.query_freq = defaultdict(int)
-        # Recent queries with timestamps
-        self.recent_queries = []
-        # Maximum number of recent queries to store
+        self.prefix_tree = defaultdict(dict)  # User-specific prefix trees
+        self.query_freq = defaultdict(lambda: defaultdict(int))
+        self.recent_queries = defaultdict(list)
         self.max_recent = 1000
-        # Time window for recent queries (in hours)
         self.time_window = 24
-        
-    def _add_to_prefix_tree(self, query: str):
-        """Add a query to the prefix tree"""
-        current = self.prefix_tree
+        self.conn = get_db_connection()
+        self.cur = self.conn.cursor()
+
+    def _execute_query(self, query: str, params: tuple = None) -> List[Dict]:
+        """Execute a database query and return results as dictionaries"""
+        try:
+            self.cur.execute(query, params)
+            if self.cur.description:
+                columns = [desc[0] for desc in self.cur.description]
+                results = self.cur.fetchall()
+                return [dict(zip(columns, row)) for row in results]
+            return []
+        except Exception as e:
+            self.conn.rollback()
+            logger.error(f"Database query failed: {str(e)}\nQuery: {query}\nParams: {params}")
+            raise
+
+    def _add_to_prefix_tree(self, query: str, user_id: str):
+        """Add a query to the user's prefix tree"""
+        current = self.prefix_tree[user_id]
         query = query.lower()
         for char in query:
             if char not in current:
@@ -32,9 +42,12 @@ class MLPredictor:
             current['_end_'] = set()
         current['_end_'].add(query)
 
-    def _get_from_prefix_tree(self, prefix: str, limit: int) -> List[str]:
-        """Get all queries starting with prefix"""
-        current = self.prefix_tree
+    def _get_from_prefix_tree(self, prefix: str, user_id: str, limit: int) -> List[str]:
+        """Get all queries starting with prefix from user's tree"""
+        if user_id not in self.prefix_tree:
+            return []
+            
+        current = self.prefix_tree[user_id]
         prefix = prefix.lower()
         
         # Navigate to prefix node
@@ -57,12 +70,186 @@ class MLPredictor:
         collect_words(current, limit)
         return results[:limit]
 
-    def train(self, historical_queries: List[str]):
+    def _get_user_training_data(self, user_id: str) -> List[Dict]:
+        """Get comprehensive user search history with click and success metrics"""
+        try:
+            query = """
+            WITH UserSearches AS (
+                SELECT 
+                    sl.query,
+                    COUNT(*) as search_count,
+                    MAX(sl.timestamp) as last_used,
+                    SUM(CASE WHEN sl.clicked THEN 1 ELSE 0 END)::float / COUNT(*) as click_rate,
+                    AVG(sl.success_rate) as avg_success_rate,
+                    array_agg(DISTINCT es.expert_id) as clicked_experts
+                FROM search_logs sl
+                LEFT JOIN expert_searches es 
+                    ON sl.id = es.search_id AND es.clicked = true
+                WHERE sl.user_id = %s
+                AND sl.timestamp >= NOW() - INTERVAL '30 days'
+                GROUP BY sl.query
+            )
+            SELECT 
+                query,
+                search_count,
+                last_used,
+                click_rate,
+                avg_success_rate,
+                clicked_experts
+            FROM UserSearches
+            ORDER BY last_used DESC
+            """
+            return self._execute_query(query, (user_id,))
+        except Exception as e:
+            logger.error(f"Error getting user training data: {e}")
+            return []
+
+    def train_user_model(self, user_id: str):
+        """Train predictor with user-specific search patterns"""
+        try:
+            # Get comprehensive user history
+            user_history = self._get_user_training_data(user_id)
+            
+            # Reset user's data structures
+            self.prefix_tree[user_id] = {}
+            self.query_freq[user_id].clear()
+            self.recent_queries[user_id] = []
+            
+            for record in user_history:
+                query = record['query']
+                search_count = record['search_count']
+                last_used = record['last_used']
+                click_rate = record['click_rate']
+                success_rate = record['avg_success_rate']
+                
+                # Calculate query weight based on multiple factors
+                weight = search_count * (1 + click_rate) * (1 + success_rate)
+                
+                # Add to prefix tree
+                self._add_to_prefix_tree(query, user_id)
+                self.query_freq[user_id][query.lower()] = weight
+                
+                # Add to recent queries if within time window
+                if datetime.now() - last_used < timedelta(hours=self.time_window):
+                    self.recent_queries[user_id].append({
+                        'query': query,
+                        'timestamp': last_used,
+                        'weight': weight
+                    })
+            
+            logger.info(f"Trained model for user {user_id} with {len(user_history)} queries")
+            
+        except Exception as e:
+            logger.error(f"Error training user model: {e}")
+
+    def predict(self, partial_query: str, user_id: str, limit: int = 5) -> List[str]:
+        """Predict queries with personalized ranking"""
+        try:
+            if not partial_query or len(partial_query) < 2:
+                return []
+                
+            # Ensure user model is trained
+            if user_id not in self.prefix_tree:
+                self.train_user_model(user_id)
+            
+            # Get matching queries
+            matches = self._get_from_prefix_tree(partial_query, user_id, limit * 2)
+            scored_matches = []
+            current_time = datetime.now()
+            
+            for query in matches:
+                score = 0
+                
+                # Get detailed query metrics
+                metrics_query = """
+                SELECT 
+                    COUNT(*) as usage_count,
+                    SUM(CASE WHEN clicked THEN 1 ELSE 0 END)::float / COUNT(*) as click_rate,
+                    AVG(success_rate) as success_rate,
+                    MAX(timestamp) as last_used,
+                    COUNT(DISTINCT user_id) as user_count
+                FROM search_logs
+                WHERE query = %s AND user_id = %s
+                AND timestamp >= NOW() - INTERVAL '30 days'
+                """
+                metrics = self._execute_query(metrics_query, (query, user_id))
+                
+                if metrics and metrics[0]:
+                    m = metrics[0]
+                    
+                    # Usage frequency score (0-3)
+                    score += min(m['usage_count'] / 5, 3)
+                    
+                    # Click-through rate score (0-2)
+                    score += m['click_rate'] * 2
+                    
+                    # Success rate score (0-2)
+                    score += m['success_rate'] * 2
+                    
+                    # Recency score (0-2)
+                    days_old = (current_time - m['last_used']).days
+                    score += max(0, 2 - (days_old * 0.1))
+                    
+                    # Add base frequency from prefix tree
+                    score += self.query_freq[user_id].get(query.lower(), 0) * 0.1
+                
+                scored_matches.append((query, score))
+            
+            # Sort by score and return top matches
+            scored_matches.sort(key=lambda x: x[1], reverse=True)
+            predictions = [query for query, _ in scored_matches[:limit]]
+            
+            # Record predictions in database
+            for pred in predictions:
+                self._execute_query("""
+                    INSERT INTO query_predictions 
+                    (partial_query, predicted_query, confidence_score, user_id)
+                    VALUES (%s, %s, %s, %s)
+                """, (partial_query, pred, score, user_id))
+            
+            self.conn.commit()
+            return predictions
+            
+        except Exception as e:
+            logger.error(f"Error in personalized prediction: {e}")
+            return []
+
+    def update(self, new_query: str, user_id: str = None):
+        """Update the model with a new query"""
+        try:
+            new_query = new_query.strip()
+            if not new_query or not user_id:
+                return
+                
+            # Add to user's prefix tree
+            self._add_to_prefix_tree(new_query, user_id)
+            
+            # Update frequency
+            self.query_freq[user_id][new_query.lower()] += 1
+            
+            # Update recent queries
+            self.recent_queries[user_id].append({
+                'query': new_query,
+                'timestamp': datetime.now(),
+                'weight': 1  # Base weight for new queries
+            })
+            
+            # Maintain recent queries limit
+            if len(self.recent_queries[user_id]) > self.max_recent:
+                self.recent_queries[user_id] = self.recent_queries[user_id][-self.max_recent:]
+                
+        except Exception as e:
+            logger.error(f"Error updating ML predictor: {e}")
+
+    def train(self, historical_queries: List[str], user_id: str = "default"):
         """Train the predictor on historical queries"""
         try:
-            # Reset data structures
-            self.prefix_tree = {}
-            self.query_freq.clear()
+            if not historical_queries:
+                return
+                
+            # Reset user's data structures
+            self.prefix_tree[user_id] = {}
+            self.query_freq[user_id].clear()
             
             # Process each query
             for query in historical_queries:
@@ -70,83 +257,22 @@ class MLPredictor:
                 if not query:
                     continue
                     
-                self._add_to_prefix_tree(query)
-                self.query_freq[query.lower()] += 1
+                self._add_to_prefix_tree(query, user_id)
+                self.query_freq[user_id][query.lower()] += 1
                 
-            logger.info(f"Trained on {len(historical_queries)} queries")
+            logger.info(f"Trained user {user_id} model on {len(historical_queries)} queries")
             
         except Exception as e:
             logger.error(f"Error training ML predictor: {e}")
 
-    def predict(self, 
-               partial_query: str,
-               context: Optional[Dict[str, Any]] = None,
-               limit: int = 5) -> List[str]:
-        """Predict queries based on partial input"""
-        try:
-            if not partial_query or len(partial_query) < 2:
-                return []
-                
-            # Get matching queries from prefix tree
-            matches = self._get_from_prefix_tree(partial_query, limit * 2)
-            
-            # Score matches
-            scored_matches = []
-            current_time = datetime.now()
-            
-            for query in matches:
-                score = 0
-                
-                # Frequency score (0-5)
-                freq = self.query_freq[query.lower()]
-                score += min(freq / 10, 5)
-                
-                # Recency score (0-3)
-                recent_count = sum(1 for rq in self.recent_queries 
-                                 if rq['query'].lower() == query.lower() 
-                                 and current_time - rq['timestamp'] < timedelta(hours=self.time_window))
-                score += min(recent_count, 3)
-                
-                # Length similarity score (0-2)
-                length_diff = abs(len(query) - len(partial_query))
-                score += max(0, 2 - (length_diff * 0.1))
-                
-                # Context score if available (0-2)
-                if context and 'user_queries' in context:
-                    user_query_count = sum(1 for uq in context['user_queries'] 
-                                         if uq.lower() == query.lower())
-                    score += min(user_query_count * 0.5, 2)
-                
-                scored_matches.append((query, score))
-            
-            # Sort by score and return top matches
-            scored_matches.sort(key=lambda x: x[1], reverse=True)
-            return [query for query, _ in scored_matches[:limit]]
-            
-        except Exception as e:
-            logger.error(f"Error in ML prediction: {e}")
-            return []
-            
-    def update(self, new_query: str):
-        """Update the model with a new query"""
-        try:
-            new_query = new_query.strip()
-            if not new_query:
-                return
-                
-            # Update prefix tree and frequency
-            self._add_to_prefix_tree(new_query)
-            self.query_freq[new_query.lower()] += 1
-            
-            # Update recent queries
-            self.recent_queries.append({
-                'query': new_query,
-                'timestamp': datetime.now()
-            })
-            
-            # Maintain recent queries limit
-            if len(self.recent_queries) > self.max_recent:
-                self.recent_queries = self.recent_queries[-self.max_recent:]
-                
-        except Exception as e:
-            logger.error(f"Error updating ML predictor: {e}")
+    def close(self):
+        """Close database connection"""
+        if hasattr(self, 'cur') and self.cur:
+            self.cur.close()
+        if hasattr(self, 'conn') and self.conn:
+            self.conn.close()
+            logger.info("Database connection closed")
+
+    def __del__(self):
+        """Destructor to ensure connection is closed"""
+        self.close()
