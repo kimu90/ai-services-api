@@ -143,13 +143,15 @@ class MLPredictor:
             logger.error(f"Error training user model: {e}")
 
     def predict(self, partial_query: str, user_id: str, limit: int = 5) -> List[str]:
-        """Predict queries with personalized ranking"""
+        """Predict queries with personalized ranking and improved error handling"""
         try:
             if not partial_query or len(partial_query) < 2:
+                logger.debug(f"Skipping prediction: partial query too short or empty: {partial_query}")
                 return []
                 
             # Ensure user model is trained
             if user_id not in self.prefix_tree:
+                logger.debug(f"Training model for new user: {user_id}")
                 self.train_user_model(user_id)
             
             # Get matching queries
@@ -157,61 +159,87 @@ class MLPredictor:
             scored_matches = []
             current_time = datetime.now()
             
+            logger.debug(f"Found {len(matches)} initial matches for partial query: {partial_query}")
+            
             for query in matches:
-                score = 0
+                base_score = 0
                 
-                # Get detailed query metrics
+                # Get detailed query metrics with better error handling
                 metrics_query = """
-                SELECT 
-                    COUNT(*) as usage_count,
-                    SUM(CASE WHEN clicked THEN 1 ELSE 0 END)::float / COUNT(*) as click_rate,
-                    AVG(success_rate) as success_rate,
-                    MAX(timestamp) as last_used,
-                    COUNT(DISTINCT user_id) as user_count
-                FROM search_logs
-                WHERE query = %s AND user_id = %s
-                AND timestamp >= NOW() - INTERVAL '30 days'
+                    SELECT 
+                        COALESCE(COUNT(*), 0) as usage_count,
+                        COALESCE(SUM(CASE WHEN clicked THEN 1 ELSE 0 END)::float / NULLIF(COUNT(*), 0), 0) as click_rate,
+                        COALESCE(AVG(success_rate), 0) as success_rate,
+                        MAX(timestamp) as last_used,
+                        COALESCE(COUNT(DISTINCT user_id), 0) as user_count
+                    FROM search_logs
+                    WHERE query = %s AND user_id = %s
+                    AND timestamp >= NOW() - INTERVAL '30 days'
+                    GROUP BY query
                 """
-                metrics = self._execute_query(metrics_query, (query, user_id))
                 
-                if metrics and metrics[0]:
-                    m = metrics[0]
+                try:
+                    metrics = self._execute_query(metrics_query, (query, user_id))
                     
-                    # Usage frequency score (0-3)
-                    score += min(m['usage_count'] / 5, 3)
+                    if metrics and metrics[0]:
+                        m = metrics[0]
+                        
+                        # Safe extraction of metrics with defaults
+                        usage_count = float(m.get('usage_count', 0) or 0)
+                        click_rate = float(m.get('click_rate', 0) or 0)
+                        success_rate = float(m.get('success_rate', 0) or 0)
+                        last_used = m.get('last_used')
+                        
+                        # Usage frequency score (0-3)
+                        base_score += min(usage_count / 5, 3)
+                        
+                        # Click-through rate score (0-2)
+                        base_score += click_rate * 2
+                        
+                        # Success rate score (0-2)
+                        base_score += success_rate * 2
+                        
+                        # Recency score (0-2)
+                        if last_used:
+                            days_old = (current_time - last_used).days
+                            base_score += max(0, 2 - (days_old * 0.1))
+                        
+                        # Add base frequency from prefix tree (with safety check)
+                        freq_score = self.query_freq[user_id].get(query.lower(), 0)
+                        base_score += float(freq_score) * 0.1
                     
-                    # Click-through rate score (0-2)
-                    score += m['click_rate'] * 2
+                    logger.debug(f"Query '{query}' scored {base_score}")
+                    scored_matches.append((query, base_score))
                     
-                    # Success rate score (0-2)
-                    score += m['success_rate'] * 2
-                    
-                    # Recency score (0-2)
-                    days_old = (current_time - m['last_used']).days
-                    score += max(0, 2 - (days_old * 0.1))
-                    
-                    # Add base frequency from prefix tree
-                    score += self.query_freq[user_id].get(query.lower(), 0) * 0.1
-                
-                scored_matches.append((query, score))
+                except Exception as metric_error:
+                    logger.error(f"Error calculating metrics for query '{query}': {metric_error}")
+                    # Add with minimal score to keep in results but ranked lower
+                    scored_matches.append((query, 0.1))
             
             # Sort by score and return top matches
             scored_matches.sort(key=lambda x: x[1], reverse=True)
-            predictions = [query for query, _ in scored_matches[:limit]]
+            predictions = [query for query, score in scored_matches[:limit]]
             
-            # Record predictions in database
-            for pred in predictions:
-                self._execute_query("""
-                    INSERT INTO query_predictions 
-                    (partial_query, predicted_query, confidence_score, user_id)
-                    VALUES (%s, %s, %s, %s)
-                """, (partial_query, pred, score, user_id))
+            try:
+                # Record predictions in database with error handling
+                for pred in predictions:
+                    self._execute_query("""
+                        INSERT INTO query_predictions 
+                        (partial_query, predicted_query, confidence_score, user_id)
+                        VALUES (%s, %s, %s, %s)
+                    """, (partial_query, pred, scored_matches[predictions.index(pred)][1], user_id))
+                
+                self.conn.commit()
+                
+            except Exception as db_error:
+                logger.error(f"Error recording predictions: {db_error}")
+                # Continue even if recording fails
             
-            self.conn.commit()
+            logger.debug(f"Returning {len(predictions)} predictions for '{partial_query}'")
             return predictions
-            
+                
         except Exception as e:
-            logger.error(f"Error in personalized prediction: {e}")
+            logger.error(f"Error in personalized prediction: {str(e)}")
             return []
 
     def update(self, new_query: str, user_id: str = None):
