@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
+import networkx as nx
 from datetime import datetime, timedelta
 from typing import List, Dict, Any
 from utils.logger import setup_logger
@@ -25,7 +26,14 @@ class UnifiedAnalyticsDashboard:
         self.display_overall_metrics()
 
         # Tabs for different analytics sections
-        tabs = st.tabs(["Chat Analytics", "Search Analytics", "Expert Analytics", "User Behavior"])
+        tabs = st.tabs([
+            "Chat Analytics", 
+            "Search Analytics", 
+            "Expert Analytics", 
+            "User Behavior", 
+            "Domain Analytics", 
+            "Recommendation Network"
+        ])
         
         with tabs[0]:
             self.display_chat_analytics()
@@ -35,6 +43,10 @@ class UnifiedAnalyticsDashboard:
             self.display_expert_analytics()
         with tabs[3]:
             self.display_user_behavior()
+        with tabs[4]:
+            self.display_domain_analytics()
+        with tabs[5]:
+            self.display_recommendation_network()
 
     def create_sidebar_filters(self):
         st.sidebar.title("Filters")
@@ -54,6 +66,18 @@ class UnifiedAnalyticsDashboard:
             "Analytics Type",
             ["chat", "search", "expert matching"],
             default=["chat", "search", "expert matching"]
+        )
+
+        # Additional recommendation network filters
+        self.min_similarity = st.sidebar.slider(
+            "Minimum Similarity Score",
+            0.0, 1.0, 0.5
+        )
+
+        # Expert count filter
+        self.expert_count = st.sidebar.slider(
+            "Number of Experts to Show",
+            5, 50, 20
         )
 
     def get_chat_metrics(self) -> Dict[str, Any]:
@@ -374,6 +398,205 @@ class UnifiedAnalyticsDashboard:
                         title='Average Session Duration (seconds)'
                     )
                 )
+            
+        finally:
+            cursor.close()
+
+    def display_domain_analytics(self):
+        st.subheader("Domain Analytics")
+        
+        cursor = self.conn.cursor()
+        try:
+            # Domain expertise analytics
+            cursor.execute("""
+                SELECT 
+                    domain_name,
+                    expert_count,
+                    match_count,
+                    match_count::float / NULLIF(expert_count, 0) as engagement_rate
+                FROM domain_expertise_analytics
+                ORDER BY match_count DESC
+                LIMIT %s
+            """, (self.expert_count,))
+            
+            columns = [desc[0] for desc in cursor.description]
+            domain_data = pd.DataFrame(cursor.fetchall(), columns=columns)
+            
+            # Domain popularity bar chart
+            st.plotly_chart(
+                px.bar(
+                    domain_data,
+                    x='domain_name',
+                    y='match_count',
+                    title='Domain Popularity',
+                    hover_data=['expert_count', 'engagement_rate']
+                )
+            )
+            
+            # Domain engagement heatmap
+            fig = go.Figure(data=go.Heatmap(
+                z=domain_data[['expert_count', 'match_count', 'engagement_rate']].values,
+                x=['Expert Count', 'Match Count', 'Engagement Rate'],
+                y=domain_data['domain_name'],
+                colorscale='Viridis'
+            ))
+            fig.update_layout(title='Domain Engagement Matrix')
+            st.plotly_chart(fig)
+            
+            # Detailed domain metrics table
+            st.dataframe(
+                domain_data.sort_values('match_count', ascending=False),
+                use_container_width=True
+            )
+            
+        finally:
+            cursor.close()
+
+    def display_recommendation_network(self):
+        st.subheader("Expert Recommendation Network")
+        
+        cursor = self.conn.cursor()
+        try:
+            # Get expert matching data
+            cursor.execute("""
+                WITH MatchingData AS (
+                    SELECT 
+                        expert_id,
+                        matched_expert_id,
+                        similarity_score,
+                        shared_domains,
+                        ROW_NUMBER() OVER (ORDER BY similarity_score DESC) as rank
+                    FROM expert_matching_logs
+                    WHERE similarity_score >= %s
+                )
+                SELECT 
+                    expert_id,
+                    matched_expert_id,
+                    similarity_score,
+                    shared_domains
+                FROM MatchingData
+                WHERE rank <= %s
+            """, (self.min_similarity, self.expert_count))
+            
+            matching_data = pd.DataFrame(
+                cursor.fetchall(), 
+                columns=['source', 'target', 'similarity', 'shared_domains']
+            )
+            
+            # If no matching data, show a message
+            if matching_data.empty:
+                st.warning("No expert matches found with the current filters.")
+                return
+            
+            # Create networkx graph
+            G = nx.from_pandas_edgelist(
+                matching_data, 
+                'source', 
+                'target', 
+                ['similarity', 'shared_domains']
+            )
+            
+            # Create network visualization
+            pos = nx.spring_layout(G)
+            edge_x, edge_y = [], []
+            edge_colors = []
+            
+            # Prepare edges
+            for edge in G.edges(data=True):
+                x0, y0 = pos[edge[0]]
+                x1, y1 = pos[edge[1]]
+                edge_x.extend([x0, x1, None])
+                edge_y.extend([y0, y1, None])
+                # Color edges based on similarity
+                edge_colors.append(edge[2]['similarity'])
+            
+            # Create figure
+            fig = go.Figure()
+            
+            # Add edges
+            fig.add_trace(go.Scatter(
+                x=edge_x, 
+                y=edge_y,
+                line=dict(
+                    width=1, 
+                    color=edge_colors, 
+                    colorscale='Viridis',
+                    showscale=True
+                ),
+                hoverinfo='text',
+                mode='lines'
+            ))
+            
+            # Add nodes
+            node_degrees = [len(list(G.neighbors(node))) for node in G.nodes()]
+            fig.add_trace(go.Scatter(
+                x=[pos[node][0] for node in G.nodes()],
+                y=[pos[node][1] for node in G.nodes()],
+                mode='markers+text',
+                marker=dict(
+                    size=[10 + 5 * degree for degree in node_degrees],
+                    color=node_degrees,
+                    colorscale='Viridis',
+                    showscale=True,
+                    colorbar=dict(title='Connections')
+                ),
+                text=[f"Expert {node}" for node in G.nodes()],
+                textposition='top center'
+            ))
+            
+            fig.update_layout(
+                title="Expert Recommendation Network",
+                showlegend=False,
+                hovermode='closest'
+            )
+            
+            st.plotly_chart(fig)
+            
+            # Expert matching metrics
+            st.subheader("Expert Matching Metrics")
+            cursor.execute("""
+                SELECT 
+                    AVG(similarity_score) as avg_similarity,
+                    COUNT(*) as total_matches,
+                    COUNT(DISTINCT expert_id) as unique_experts,
+                    COUNT(DISTINCT matched_expert_id) as matched_experts
+                FROM expert_matching_logs
+                WHERE timestamp BETWEEN %s AND %s
+                AND similarity_score >= %s
+            """, (self.start_date, self.end_date, self.min_similarity))
+            
+            metrics = cursor.fetchone()
+            
+            col1, col2, col3, col4 = st.columns(4)
+            with col1:
+                st.metric("Avg Similarity", f"{metrics[0]:.2f}")
+            with col2:
+                st.metric("Total Matches", f"{metrics[1]:,}")
+            with col3:
+                st.metric("Unique Experts", f"{metrics[2]:,}")
+            with col4:
+                st.metric("Matched Experts", f"{metrics[3]:,}")
+            
+            # Detailed matching data
+            st.subheader("Top Expert Matches")
+            cursor.execute("""
+                SELECT 
+                    expert_id,
+                    matched_expert_id,
+                    similarity_score,
+                    shared_domains,
+                    timestamp
+                FROM expert_matching_logs
+                WHERE timestamp BETWEEN %s AND %s
+                AND similarity_score >= %s
+                ORDER BY similarity_score DESC
+                LIMIT 50
+            """, (self.start_date, self.end_date, self.min_similarity))
+            
+            columns = [desc[0] for desc in cursor.description]
+            matches_data = pd.DataFrame(cursor.fetchall(), columns=columns)
+            
+            st.dataframe(matches_data, use_container_width=True)
             
         finally:
             cursor.close()

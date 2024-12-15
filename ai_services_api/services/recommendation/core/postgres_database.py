@@ -8,6 +8,7 @@ import json
 from urllib.parse import urlparse
 import google.generativeai as genai
 from dotenv import load_dotenv
+import time
 
 # Load environment variables
 load_dotenv()
@@ -53,9 +54,10 @@ def get_db_connection():
         logger.error(f"Error connecting to the database: {e}")
         raise
 
-async def normalize_expertise(expertise_list: List[str]) -> Dict[str, List[str]]:
+async def normalize_expertise(expertise_list: List[str]) -> Dict[str, Any]:
     """
     Use Gemini to normalize and categorize expertise
+    Returns data in JSONB compatible format
     """
     if not expertise_list:
         return {
@@ -84,12 +86,11 @@ async def normalize_expertise(expertise_list: List[str]) -> Dict[str, List[str]]
 
     try:
         response = model.generate_content(prompt)
-        categories = eval(response.text)
+        categories = json.loads(response.text)  # Using json.loads instead of eval
         logger.info("Successfully normalized expertise using Gemini")
         return categories
     except Exception as e:
         logger.error(f"Error normalizing expertise: {e}")
-        # Fallback categorization
         return {
             "domains": expertise_list[:2],
             "fields": expertise_list[2:4],
@@ -98,7 +99,8 @@ async def normalize_expertise(expertise_list: List[str]) -> Dict[str, List[str]]
         }
 
 async def insert_expert(conn, expert_data: Dict[str, Any]):
-    """Insert expert data into PostgreSQL database with enhanced expertise handling"""
+    """Insert expert with JSONB data handling and analytics tracking."""
+    start_time = time.time()
     try:
         with conn.cursor() as cur:
             # Get expertise data
@@ -107,12 +109,16 @@ async def insert_expert(conn, expert_data: Dict[str, Any]):
             # Normalize expertise using Gemini
             normalized_expertise = await normalize_expertise(expertise_list)
             
-            # Extract or generate name components
+            # Prepare JSONB data
+            expertise_jsonb = json.dumps(expertise_list)
+            normalized_jsonb = json.dumps(normalized_expertise)
+            
+            # Extract name components
             full_name = expert_data.get('display_name', '').split()
             firstname = full_name[0] if full_name else 'Unknown'
             lastname = ' '.join(full_name[1:]) if len(full_name) > 1 else 'Unknown'
             
-            # Insert into experts table with normalized expertise
+            # Insert with JSONB handling
             cur.execute("""
                 INSERT INTO experts_expert (
                     id,
@@ -122,13 +128,10 @@ async def insert_expert(conn, expert_data: Dict[str, Any]):
                     domains,
                     fields,
                     subfields,
-                    normalized_domains,
-                    normalized_fields,
-                    normalized_skills,
-                    keywords,
+                    normalized_expertise,
                     last_updated
                 ) VALUES (
-                    %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW()
+                    %s, %s, %s, %s::jsonb, %s::jsonb, %s::jsonb, %s::jsonb, %s::jsonb, NOW()
                 )
                 ON CONFLICT (id) DO UPDATE SET
                     firstname = EXCLUDED.firstname,
@@ -137,24 +140,26 @@ async def insert_expert(conn, expert_data: Dict[str, Any]):
                     domains = EXCLUDED.domains,
                     fields = EXCLUDED.fields,
                     subfields = EXCLUDED.subfields,
-                    normalized_domains = EXCLUDED.normalized_domains,
-                    normalized_fields = EXCLUDED.normalized_fields,
-                    normalized_skills = EXCLUDED.normalized_skills,
-                    keywords = EXCLUDED.keywords,
+                    normalized_expertise = EXCLUDED.normalized_expertise,
                     last_updated = NOW()
             """, (
                 expert_data.get('id'),
                 firstname,
                 lastname,
-                expertise_list,
-                expert_data.get('domains', []),
-                expert_data.get('fields', []),
-                expert_data.get('subfields', []),
-                normalized_expertise['domains'],
-                normalized_expertise['fields'],
-                normalized_expertise['skills'],
-                normalized_expertise['keywords']
+                expertise_jsonb,
+                json.dumps(expert_data.get('domains', [])),
+                json.dumps(expert_data.get('fields', [])),
+                json.dumps(expert_data.get('subfields', [])),
+                normalized_jsonb
             ))
+            
+            # Record processing metrics
+            await record_expert_processing(conn, expert_data.get('id'), {
+                'processing_time': time.time() - start_time,
+                'domains_count': len(normalized_expertise['domains']),
+                'fields_count': len(normalized_expertise['fields']),
+                'success': True
+            })
             
             conn.commit()
             logger.info(f"Successfully inserted/updated expert: {expert_data.get('id')}")
@@ -162,7 +167,115 @@ async def insert_expert(conn, expert_data: Dict[str, Any]):
     except Exception as e:
         conn.rollback()
         logger.error(f"Error inserting expert data: {e}")
+        # Record error in processing metrics
+        await record_expert_processing(conn, expert_data.get('id'), {
+            'processing_time': time.time() - start_time,
+            'success': False,
+            'error_message': str(e)
+        })
         raise
+
+async def get_expert(conn, expert_id: str) -> Optional[Dict[str, Any]]:
+    """Retrieve expert data with JSONB handling"""
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT 
+                    id,
+                    firstname,
+                    lastname,
+                    knowledge_expertise,
+                    domains,
+                    fields,
+                    subfields,
+                    normalized_expertise,
+                    last_updated
+                FROM experts_expert
+                WHERE id = %s
+            """, (expert_id,))
+            
+            result = cur.fetchone()
+            if result:
+                return {
+                    'id': result[0],
+                    'firstname': result[1],
+                    'lastname': result[2],
+                    'knowledge_expertise': result[3],
+                    'domains': result[4],
+                    'fields': result[5],
+                    'subfields': result[6],
+                    'normalized_expertise': result[7],
+                    'last_updated': result[8]
+                }
+            return None
+            
+    except Exception as e:
+        logger.error(f"Error retrieving expert data: {e}")
+        return None
+
+async def update_expert_expertise(conn, expert_id: str, new_expertise: List[str]):
+    """Update expert's expertise with JSONB handling"""
+    try:
+        # Get current expertise for comparison
+        current_expert = await get_expert(conn, expert_id)
+        old_expertise = current_expert.get('knowledge_expertise', []) if current_expert else []
+        
+        # Normalize new expertise
+        normalized = await normalize_expertise(new_expertise)
+        
+        with conn.cursor() as cur:
+            cur.execute("""
+                UPDATE experts_expert
+                SET 
+                    knowledge_expertise = %s::jsonb,
+                    normalized_expertise = %s::jsonb,
+                    last_updated = NOW()
+                WHERE id = %s
+            """, (
+                json.dumps(new_expertise),
+                json.dumps(normalized),
+                expert_id
+            ))
+            
+            # Record the update
+            await record_expertise_update(conn, expert_id, old_expertise, new_expertise)
+            
+            conn.commit()
+            logger.info(f"Successfully updated expertise for expert: {expert_id}")
+            return True
+            
+    except Exception as e:
+        conn.rollback()
+        logger.error(f"Error updating expert expertise: {e}")
+        return False
+
+async def record_expert_processing(conn, expert_id: str, processing_data: Dict[str, Any]):
+    """Record processing metrics with JSONB data"""
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                INSERT INTO expert_processing_logs (
+                    expert_id,
+                    processing_time,
+                    domains_count,
+                    fields_count,
+                    success,
+                    error_message,
+                    metadata
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s::jsonb)
+            """, (
+                expert_id,
+                processing_data.get('processing_time', 0),
+                processing_data.get('domains_count', 0),
+                processing_data.get('fields_count', 0),
+                processing_data.get('success', True),
+                processing_data.get('error_message'),
+                json.dumps(processing_data.get('metadata', {}))
+            ))
+            conn.commit()
+    except Exception as e:
+        logger.error(f"Error recording expert processing: {e}")
+        conn.rollback()
 
 async def get_expert(conn, expert_id: str) -> Optional[Dict[str, Any]]:
     """Retrieve expert data from PostgreSQL database with normalized expertise"""
@@ -252,39 +365,34 @@ async def search_experts(conn, query: str, limit: int = 10) -> List[Dict[str, An
         logger.error(f"Error searching experts: {e}")
         return []
 
-async def update_expert_expertise(conn, expert_id: str, new_expertise: List[str]):
-    """
-    Update an expert's expertise and renormalize categories
-    """
+
+async def record_expertise_update(conn, expert_id: str, old_expertise: List[str], 
+                                new_expertise: List[str]):
+    """Record expertise updates with JSONB handling"""
     try:
-        # Normalize new expertise
-        normalized = await normalize_expertise(new_expertise)
-        
         with conn.cursor() as cur:
             cur.execute("""
-                UPDATE experts_expert
-                SET 
-                    knowledge_expertise = %s,
-                    normalized_domains = %s,
-                    normalized_fields = %s,
-                    normalized_skills = %s,
-                    keywords = %s,
-                    last_updated = NOW()
-                WHERE id = %s
+                INSERT INTO expertise_update_logs (
+                    expert_id,
+                    old_expertise,
+                    new_expertise,
+                    domains_changed,
+                    fields_changed,
+                    update_metadata
+                ) VALUES (%s, %s::jsonb, %s::jsonb, %s, %s, %s::jsonb)
             """, (
-                new_expertise,
-                normalized['domains'],
-                normalized['fields'],
-                normalized['skills'],
-                normalized['keywords'],
-                expert_id
+                expert_id,
+                json.dumps(old_expertise),
+                json.dumps(new_expertise),
+                len(set(new_expertise) - set(old_expertise)),
+                len(set(old_expertise) - set(new_expertise)),
+                json.dumps({
+                    'timestamp': datetime.utcnow().isoformat(),
+                    'added_items': list(set(new_expertise) - set(old_expertise)),
+                    'removed_items': list(set(old_expertise) - set(new_expertise))
+                })
             ))
-            
             conn.commit()
-            logger.info(f"Successfully updated expertise for expert: {expert_id}")
-            return True
-            
     except Exception as e:
+        logger.error(f"Error recording expertise update: {e}")
         conn.rollback()
-        logger.error(f"Error updating expert expertise: {e}")
-        return False

@@ -173,43 +173,33 @@ class Neo4jDatabase:
             self._logger.error(f"Error finding expert clusters: {e}")
             return []
 
-    async def get_expertise_summary(self, expert_id: str) -> Dict[str, Any]:
-        """
-        Get a comprehensive summary of an expert's expertise and connections
-        """
+    def get_expertise_summary(self, expert_id: str) -> Dict[str, Any]:
+        """Enhanced expertise summary with analytics data."""
         query = """
         MATCH (e:Expert {id: $expert_id})
         
-        // Get domains
+        // Get domains with counts
         OPTIONAL MATCH (e)-[:HAS_DOMAIN]->(d:Domain)
-        WITH e, COLLECT(d.name) as domains
+        WITH e, COLLECT({name: d.name, count: size((d)<-[:HAS_DOMAIN]-())}) as domains
         
-        // Get fields
+        // Get fields with usage stats
         OPTIONAL MATCH (e)-[:HAS_FIELD]->(f:Field)
-        WITH e, domains, COLLECT(f.name) as fields
+        WITH e, domains, COLLECT({name: f.name, usage: size((f)<-[:HAS_FIELD]-())}) as fields
         
-        // Get skills
+        // Get skills with frequency
         OPTIONAL MATCH (e)-[:HAS_SKILL]->(s:Skill)
-        WITH e, domains, fields, COLLECT(s.name) as skills
-        
-        // Get collaboration network
-        OPTIONAL MATCH (e)-[r]->(n)<-[]-(other:Expert)
-        WHERE type(r) IN ['HAS_DOMAIN', 'HAS_FIELD', 'HAS_SKILL']
-        WITH e, domains, fields, skills,
-             COLLECT(DISTINCT {
-                 expert_id: other.id,
-                 name: other.name,
-                 shared_expertise: n.name,
-                 relationship_type: type(r)
-             }) as collaborators
+        WITH e, domains, fields, COLLECT({name: s.name, frequency: size((s)<-[:HAS_SKILL]-())}) as skills
         
         RETURN {
-            expert_id: e.id,
             name: e.name,
             domains: domains,
             fields: fields,
             skills: skills,
-            collaborators: collaborators
+            metrics: {
+                total_domains: size(domains),
+                total_fields: size(fields),
+                total_skills: size(skills)
+            }
         } as summary
         """
         
@@ -224,26 +214,38 @@ class Neo4jDatabase:
             self._logger.error(f"Error getting expertise summary: {e}")
             return {}
 
-    async def find_expertise_paths(self, expert_id1: str, expert_id2: str, max_depth: int = 3) -> List[Dict[str, Any]]:
-        """
-        Find all expertise connection paths between two experts
-        """
+    def find_expertise_paths(self, expert_id1: str, expert_id2: str, max_depth: int = 3) -> List[Dict[str, Any]]:
+        """Enhanced path finding with connection strength metrics."""
         query = """
         MATCH p = shortestPath(
             (e1:Expert {id: $expert_id1})-[*1..$max_depth]-(e2:Expert {id: $expert_id2})
         )
         WHERE ALL(r IN relationships(p) WHERE type(r) IN ['HAS_DOMAIN', 'HAS_FIELD', 'HAS_SKILL'])
-        WITH p, 
-             [n IN nodes(p) | CASE WHEN n:Expert THEN n.name 
-                                  ELSE n.name END] as path_nodes,
-             [r IN relationships(p) | type(r)] as path_rels
+        
+        WITH p,
+             [n IN nodes(p) WHERE n:Expert | n.name] as experts,
+             [n IN nodes(p) WHERE NOT n:Expert | n.name] as shared_attributes,
+             REDUCE(s = 0, r IN relationships(p) | 
+                s + CASE type(r)
+                    WHEN 'HAS_DOMAIN' THEN 3
+                    WHEN 'HAS_FIELD' THEN 2
+                    WHEN 'HAS_SKILL' THEN 1
+                    ELSE 0
+                END
+             ) as connection_strength
+        
         RETURN {
             path_length: length(p),
-            nodes: path_nodes,
-            relationships: path_rels
-        } as path
-        ORDER BY path.path_length
-        LIMIT 5
+            experts: experts,
+            shared_attributes: shared_attributes,
+            connection_strength: connection_strength,
+            connection_type: CASE
+                WHEN connection_strength >= 8 THEN 'Strong'
+                WHEN connection_strength >= 4 THEN 'Moderate'
+                ELSE 'Weak'
+            END
+        } as path_data
+        ORDER BY connection_strength DESC
         """
         
         try:

@@ -150,6 +150,140 @@ class OpenAlexService:
         self.logger.warning(f"No works found for {orcid}")
         return None
 
+    async def get_expert_detailed_data(self, orcid: str) -> Optional[Dict[str, Any]]:
+    """Get detailed expert data with analytics metadata."""
+    expert_data = await self.get_expert_data(orcid)
+    if not expert_data:
+        return None
+
+    try:
+        # Get additional metadata
+        works_data = await self.get_expert_works(orcid)
+        domains_data = await self.get_expert_domains(orcid)
+        
+        # Calculate metadata metrics
+        metadata = {
+            'total_works': len(works_data.get('results', [])) if works_data else 0,
+            'unique_domains': len(set(d['domain'] for d in domains_data)),
+            'unique_fields': len(set(d['field'] for d in domains_data)),
+            'expertise_breadth': len(domains_data),
+            'data_completeness': self._calculate_completeness(expert_data),
+            'last_updated': datetime.utcnow().isoformat()
+        }
+        
+        expert_data['analytics_metadata'] = metadata
+        return expert_data
+        
+    except Exception as e:
+        self.logger.error(f"Error getting detailed expert data: {e}")
+        return expert_data  # Return basic data if enhanced fetch fails
+
+def _calculate_completeness(self, expert_data: Dict) -> float:
+    """Calculate data completeness score."""
+    required_fields = ['id', 'display_name', 'works_count', 'cited_by_count']
+    optional_fields = ['last_known_institution', 'x_concepts', 'counts_by_year']
+    
+    score = 0
+    total_fields = len(required_fields) + len(optional_fields)
+    
+    # Check required fields
+    for field in required_fields:
+        if expert_data.get(field):
+            score += 1
+            
+    # Check optional fields
+    for field in optional_fields:
+        if expert_data.get(field):
+            score += 0.5
+            
+    return score / total_fields
+
+async def get_expert_domains(self, orcid: str) -> List[Dict[str, str]]:
+    """Enhanced domain fetching with confidence scores."""
+    domains_fields_subfields = await super().get_expert_domains(orcid)
+    
+    # Add confidence scores and metadata
+    enhanced_domains = []
+    for item in domains_fields_subfields:
+        # Calculate confidence based on work counts and citations
+        confidence = await self._calculate_domain_confidence(
+            orcid, 
+            item['domain'], 
+            item['field']
+        )
+        
+        enhanced_domains.append({
+            **item,
+            'confidence_score': confidence,
+            'metadata': {
+                'frequency': 1,  # Will be updated by aggregation
+                'last_seen': datetime.utcnow().isoformat()
+            }
+        })
+    
+    # Aggregate and calculate frequencies
+    domain_frequencies = {}
+    for domain in enhanced_domains:
+        key = (domain['domain'], domain['field'])
+        if key in domain_frequencies:
+            domain_frequencies[key]['frequency'] += 1
+        else:
+            domain_frequencies[key] = domain
+            
+    return list(domain_frequencies.values())
+
+async def _calculate_domain_confidence(
+    self, 
+    orcid: str, 
+    domain: str, 
+    field: str
+) -> float:
+    """Calculate confidence score for domain attribution."""
+    try:
+        # Get works in this domain
+        works = await self.get_works_by_topic(domain)
+        if not works:
+            return 0.5  # Default score
+            
+        relevant_works = [
+            w for w in works 
+            if any(
+                t.get('field', {}).get('display_name') == field 
+                for t in w.get('topics', [])
+            )
+        ]
+        
+        if not relevant_works:
+            return 0.5
+            
+        # Calculate confidence based on:
+        # 1. Number of works in domain
+        # 2. Citations of works in domain
+        # 3. Recency of works
+        work_count_score = min(len(relevant_works) / 10, 1.0)
+        
+        citations = sum(w.get('cited_by_count', 0) for w in relevant_works)
+        citation_score = min(citations / 100, 1.0)
+        
+        # Calculate recency score
+        current_year = datetime.utcnow().year
+        years = [int(w.get('publication_year', current_year)) for w in relevant_works]
+        avg_year = sum(years) / len(years)
+        recency_score = (avg_year - (current_year - 10)) / 10
+        
+        # Combine scores with weights
+        confidence = (
+            work_count_score * 0.4 +
+            citation_score * 0.4 +
+            recency_score * 0.2
+        )
+        
+        return min(max(confidence, 0.1), 1.0)
+        
+    except Exception as e:
+        self.logger.error(f"Error calculating domain confidence: {e}")
+        return 0.5  # Default score on error
+
     async def get_works_by_topic(self, topic: str, limit: int = 50) -> List[Dict]:
         """
         Fetch works related to a specific topic

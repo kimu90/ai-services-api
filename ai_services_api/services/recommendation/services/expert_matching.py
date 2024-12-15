@@ -27,144 +27,117 @@ class ExpertMatchingService:
         )
 
     async def analyze_expertise(self, expertise_list: List[str]) -> Dict[str, Any]:
-        """
-        Use Gemini to analyze and categorize expertise
-        """
-        prompt = f"""
-        Analyze these areas of expertise: {', '.join(expertise_list)}
-        
-        Please provide:
-        1. Main research domains
-        2. Specific research areas
-        3. Technical skills
-        4. Potential applications
-        5. Related fields
-        
-        Return as a JSON structure with these exact keys:
-        {{
-            "domains": [],
-            "research_areas": [],
-            "technical_skills": [],
-            "applications": [],
-            "related_fields": []
-        }}
-        """
-
+        """Analyze expertise with more detailed categorization."""
         try:
-            response = model.generate_content(prompt)
+            response = self.model.generate_content(prompt)
             analysis = eval(response.text)
-            logger.info(f"Successfully analyzed expertise using Gemini")
+            
+            # Calculate additional metrics
+            analysis["total_items"] = len(expertise_list)
+            analysis["domain_distribution"] = {
+                domain: expertise_list.count(domain) 
+                for domain in analysis["domains"]
+            }
+            
             return analysis
+            
         except Exception as e:
-            logger.error(f"Error analyzing expertise with Gemini: {e}")
+            self._logger.error(f"Error analyzing expertise: {e}")
             return {
                 "domains": expertise_list[:2],
                 "research_areas": expertise_list[2:4],
                 "technical_skills": expertise_list[4:],
                 "applications": [],
-                "related_fields": []
+                "related_fields": [],
+                "total_items": len(expertise_list),
+                "domain_distribution": {}
             }
 
     async def find_similar_experts(self, expert_id: str, limit: int = 10) -> List[Dict[str, Any]]:
-        """
-        Find similar experts using both graph analysis and semantic similarity
-        """
-        # First, get the expert's expertise
+        """Find similar experts with detailed analytics tracking."""
         query = """
-        MATCH (e:Expert {id: $expert_id})
-        OPTIONAL MATCH (e)-[:HAS_DOMAIN]->(d:Domain)
-        OPTIONAL MATCH (e)-[:HAS_FIELD]->(f:Field)
-        OPTIONAL MATCH (e)-[:HAS_SKILL]->(s:Skill)
+        MATCH (e1:Expert {id: $expert_id})
+        MATCH (e2:Expert)
+        WHERE e1 <> e2
+        
+        // Calculate domain overlap
+        OPTIONAL MATCH (e1)-[:HAS_DOMAIN]->(d:Domain)<-[:HAS_DOMAIN]-(e2)
+        WITH e1, e2, COLLECT(DISTINCT d.name) as shared_domains, COUNT(DISTINCT d) as domain_count
+        
+        // Calculate field overlap
+        OPTIONAL MATCH (e1)-[:HAS_FIELD]->(f:Field)<-[:HAS_FIELD]-(e2)
+        WITH e1, e2, shared_domains, domain_count, 
+             COLLECT(DISTINCT f.name) as shared_fields, COUNT(DISTINCT f) as field_count
+        
+        // Calculate skill overlap
+        OPTIONAL MATCH (e1)-[:HAS_SKILL]->(s:Skill)<-[:HAS_SKILL]-(e2)
+        WITH e1, e2, shared_domains, domain_count, 
+             shared_fields, field_count,
+             COLLECT(DISTINCT s.name) as shared_skills, COUNT(DISTINCT s) as skill_count
+        
+        // Calculate weighted similarity score
+        WITH e2, 
+             shared_domains, domain_count,
+             shared_fields, field_count,
+             shared_skills, skill_count,
+             (domain_count * 3 + field_count * 2 + skill_count) / 
+             (CASE WHEN domain_count + field_count + skill_count = 0 
+                   THEN 1 
+                   ELSE domain_count + field_count + skill_count 
+              END) as similarity_score
+        
+        WHERE similarity_score > 0
+        
         RETURN {
-            id: e.id,
-            name: e.name,
-            domains: collect(DISTINCT d.name),
-            fields: collect(DISTINCT f.name),
-            skills: collect(DISTINCT s.name)
-        } as expert
+            id: e2.id,
+            name: e2.name,
+            shared_domains: shared_domains,
+            shared_fields: shared_fields,
+            shared_skills: shared_skills,
+            domain_count: domain_count,
+            field_count: field_count,
+            skill_count: skill_count,
+            similarity_score: similarity_score
+        } as result
+        ORDER BY similarity_score DESC
+        LIMIT $limit
         """
-
+        
         try:
             with self._neo4j.session() as session:
-                result = session.run(query, {"expert_id": expert_id})
-                expert_data = result.single()["expert"]
-                
-                if not expert_data:
-                    logger.warning(f"No data found for expert {expert_id}")
-                    return []
-
-                # Get all expertise items
-                expertise_items = (
-                    expert_data["domains"] +
-                    expert_data["fields"] +
-                    expert_data["skills"]
-                )
-
-                # Use Gemini to analyze expertise
-                expertise_analysis = await self.analyze_expertise(expertise_items)
-
-                # Use the analysis to find similar experts
-                similar_experts_query = """
-                MATCH (e:Expert)
-                WHERE e.id <> $expert_id
-                
-                // Match against analyzed domains
-                OPTIONAL MATCH (e)-[:HAS_DOMAIN]->(d:Domain)
-                WHERE d.name IN $domains
-                WITH e, COUNT(DISTINCT d) as domain_matches
-                
-                // Match against research areas
-                OPTIONAL MATCH (e)-[:HAS_FIELD]->(f:Field)
-                WHERE f.name IN $research_areas
-                WITH e, domain_matches, COUNT(DISTINCT f) as field_matches
-                
-                // Match against skills
-                OPTIONAL MATCH (e)-[:HAS_SKILL]->(s:Skill)
-                WHERE s.name IN $skills
-                WITH e, domain_matches, field_matches, COUNT(DISTINCT s) as skill_matches
-                
-                // Calculate weighted score
-                WITH e,
-                     domain_matches * 3 + 
-                     field_matches * 2 + 
-                     skill_matches as score
-                WHERE score > 0
-                
-                RETURN {
-                    id: e.id,
-                    name: e.name,
-                    similarity_score: score,
-                    matched_domains: domain_matches,
-                    matched_fields: field_matches,
-                    matched_skills: skill_matches
-                } as similar_expert
-                ORDER BY score DESC
-                LIMIT $limit
-                """
-
-                result = session.run(similar_experts_query, {
+                result = session.run(query, {
                     "expert_id": expert_id,
-                    "domains": expertise_analysis["domains"],
-                    "research_areas": expertise_analysis["research_areas"],
-                    "skills": expertise_analysis["technical_skills"],
                     "limit": limit
                 })
-
-                similar_experts = [record["similar_expert"] for record in result]
+                
+                similar_experts = []
+                for record in result:
+                    expert_data = record["result"]
+                    similar_experts.append({
+                        "id": expert_data["id"],
+                        "name": expert_data["name"],
+                        "similarity_score": expert_data["similarity_score"],
+                        "shared_domains": expert_data["shared_domains"],
+                        "shared_fields": expert_data["shared_fields"],
+                        "shared_skills": expert_data["shared_skills"],
+                        "match_details": {
+                            "domains": expert_data["domain_count"],
+                            "fields": expert_data["field_count"],
+                            "skills": expert_data["skill_count"]
+                        }
+                    })
+                
                 return similar_experts
-
+                
         except Exception as e:
-            logger.error(f"Error finding similar experts: {e}")
+            self._logger.error(f"Error finding similar experts: {e}")
             return []
 
     async def get_collaboration_recommendations(self, expert_id: str) -> List[Dict[str, Any]]:
-        """
-        Get recommendations for potential collaborations based on expertise overlap
-        and research complementarity
-        """
+        """Get recommendations with detailed collaboration metrics."""
         try:
-            # Get expert's current expertise
             with self._neo4j.session() as session:
+                # First get expert's current expertise
                 expertise_query = """
                 MATCH (e:Expert {id: $expert_id})
                 OPTIONAL MATCH (e)-[:HAS_DOMAIN]->(d:Domain)
@@ -177,67 +150,63 @@ class ExpertMatchingService:
                 } as expertise
                 """
                 
-                result = session.run(expertise_query, {"expert_id": expert_id})
-                expertise = result.single()["expertise"]
-
-                # Use Gemini to analyze potential collaboration opportunities
-                prompt = f"""
-                Given an expert with:
-                Domains: {expertise['domains']}
-                Fields: {expertise['fields']}
-                Skills: {expertise['skills']}
-
-                Please suggest complementary expertise that would be valuable for collaboration.
-                Return as a JSON structure with:
-                {{
-                    "complementary_domains": [],
-                    "complementary_skills": [],
-                    "collaboration_potential": []
-                }}
-                """
-
-                response = model.generate_content(prompt)
-                suggestions = eval(response.text)
-
-                # Find experts matching the suggestions
-                recommendations_query = """
-                MATCH (e:Expert)
-                WHERE e.id <> $expert_id
+                expertise = session.run(expertise_query, {"expert_id": expert_id}).single()["expertise"]
                 
-                // Match suggested complementary domains
-                OPTIONAL MATCH (e)-[:HAS_DOMAIN]->(d:Domain)
-                WHERE d.name IN $complementary_domains
-                WITH e, COUNT(DISTINCT d) as domain_matches
+                # Find potential collaborators
+                collab_query = """
+                MATCH (e1:Expert {id: $expert_id})
+                MATCH (e2:Expert)
+                WHERE e1 <> e2
                 
-                // Match suggested complementary skills
-                OPTIONAL MATCH (e)-[:HAS_SKILL]->(s:Skill)
-                WHERE s.name IN $complementary_skills
-                WITH e, domain_matches, COUNT(DISTINCT s) as skill_matches
+                // Find complementary expertise
+                OPTIONAL MATCH (e2)-[:HAS_DOMAIN]->(d:Domain)
+                WHERE NOT (e1)-[:HAS_DOMAIN]->(d)
+                WITH e1, e2, COLLECT(DISTINCT d.name) as complementary_domains
                 
-                WHERE domain_matches > 0 OR skill_matches > 0
+                // Find shared domains for context
+                OPTIONAL MATCH (e1)-[:HAS_DOMAIN]->(sd:Domain)<-[:HAS_DOMAIN]-(e2)
+                WITH e1, e2, complementary_domains, 
+                     COLLECT(DISTINCT sd.name) as shared_domains,
+                     COUNT(DISTINCT sd) as domain_overlap
+                
+                // Calculate collaboration score
+                WITH e2, 
+                     complementary_domains,
+                     shared_domains,
+                     domain_overlap,
+                     (domain_overlap * 0.6 + size(complementary_domains) * 0.4) as collaboration_score
+                WHERE collaboration_score > 0
                 
                 RETURN {
-                    id: e.id,
-                    name: e.name,
-                    matched_domains: domain_matches,
-                    matched_skills: skill_matches,
-                    collaboration_score: domain_matches * 2 + skill_matches
+                    id: e2.id,
+                    name: e2.name,
+                    complementary_domains: complementary_domains,
+                    shared_domains: shared_domains,
+                    collaboration_score: collaboration_score,
+                    domain_overlap: domain_overlap
                 } as recommendation
-                ORDER BY recommendation.collaboration_score DESC
+                ORDER BY collaboration_score DESC
                 LIMIT 5
                 """
-
-                result = session.run(recommendations_query, {
-                    "expert_id": expert_id,
-                    "complementary_domains": suggestions["complementary_domains"],
-                    "complementary_skills": suggestions["complementary_skills"]
-                })
-
-                recommendations = [record["recommendation"] for record in result]
+                
+                results = session.run(collab_query, {"expert_id": expert_id})
+                recommendations = []
+                
+                for record in results:
+                    rec = record["recommendation"]
+                    recommendations.append({
+                        "id": rec["id"],
+                        "name": rec["name"],
+                        "collaboration_score": rec["collaboration_score"],
+                        "matched_domains": rec["domain_overlap"],
+                        "shared_domains": rec["shared_domains"],
+                        "complementary_expertise": rec["complementary_domains"]
+                    })
+                
                 return recommendations
-
+                
         except Exception as e:
-            logger.error(f"Error getting collaboration recommendations: {e}")
+            self._logger.error(f"Error getting collaboration recommendations: {e}")
             return []
 
     def close(self):

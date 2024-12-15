@@ -67,91 +67,118 @@ def generate_fake_password():
 
 def fix_experts_table():
     conn = get_db_connection()
+    conn.autocommit = True  # Switch to autocommit mode
     cur = conn.cursor()
+    
     try:
+        # Check if table exists
         cur.execute("SELECT EXISTS (SELECT FROM information_schema.tables WHERE table_name = 'experts_expert');")
         table_exists = cur.fetchone()[0]
         
         if table_exists:
-            # Add normalized expertise columns
-            cur.execute("""
-                ALTER TABLE experts_expert
-                ADD COLUMN IF NOT EXISTS normalized_domains text[] DEFAULT '{}',
-                ADD COLUMN IF NOT EXISTS normalized_fields text[] DEFAULT '{}',
-                ADD COLUMN IF NOT EXISTS normalized_skills text[] DEFAULT '{}',
-                ADD COLUMN IF NOT EXISTS keywords text[] DEFAULT '{}',
-                ADD COLUMN IF NOT EXISTS search_text text,
-                ADD COLUMN IF NOT EXISTS last_updated timestamp with time zone DEFAULT NOW();
-            """)
-            logger.info("Added normalized expertise columns")
+            # Define all column alterations
+            alterations = [
+                "ADD COLUMN IF NOT EXISTS normalized_domains text[] DEFAULT '{}'",
+                "ADD COLUMN IF NOT EXISTS normalized_fields text[] DEFAULT '{}'",
+                "ADD COLUMN IF NOT EXISTS normalized_skills text[] DEFAULT '{}'",
+                "ADD COLUMN IF NOT EXISTS keywords text[] DEFAULT '{}'",
+                "ADD COLUMN IF NOT EXISTS search_text text",
+                "ADD COLUMN IF NOT EXISTS last_updated timestamp with time zone DEFAULT NOW()"
+            ]
+            
+            # Execute each alteration in separate transaction
+            for alter_sql in alterations:
+                try:
+                    cur.execute(f"ALTER TABLE experts_expert {alter_sql}")
+                    logger.info(f"Column alteration completed: {alter_sql}")
+                except Exception as e:
+                    logger.warning(f"Column alteration warning: {alter_sql}: {e}")
+                    continue
 
-            # Create function to update search_text
-            cur.execute("""
-                CREATE OR REPLACE FUNCTION update_expert_search_text()
-                RETURNS TRIGGER AS $$
-                BEGIN
-                    NEW.search_text = 
-                        COALESCE(NEW.knowledge_expertise::text, '') || ' ' ||
-                        COALESCE(array_to_string(NEW.normalized_domains, ' '), '') || ' ' ||
-                        COALESCE(array_to_string(NEW.normalized_fields, ' '), '') || ' ' ||
-                        COALESCE(array_to_string(NEW.normalized_skills, ' '), '');
-                    RETURN NEW;
-                END;
-                $$ LANGUAGE plpgsql;
-            """)
-            logger.info("Created search text update function")
+            # Create search text update function
+            try:
+                cur.execute("""
+                    CREATE OR REPLACE FUNCTION update_expert_search_text()
+                    RETURNS TRIGGER AS $$
+                    BEGIN
+                        NEW.search_text = 
+                            COALESCE(NEW.knowledge_expertise::text, '') || ' ' ||
+                            COALESCE(array_to_string(NEW.normalized_domains, ' '), '') || ' ' ||
+                            COALESCE(array_to_string(NEW.normalized_fields, ' '), '') || ' ' ||
+                            COALESCE(array_to_string(NEW.normalized_skills, ' '), '');
+                        RETURN NEW;
+                    END;
+                    $$ LANGUAGE plpgsql;
+                """)
+                logger.info("Created search text update function")
+            except Exception as e:
+                logger.warning(f"Search text function creation warning: {e}")
 
             # Create trigger
-            cur.execute("""
-                DROP TRIGGER IF EXISTS expert_search_text_trigger ON experts_expert;
-                CREATE TRIGGER expert_search_text_trigger
-                BEFORE INSERT OR UPDATE ON experts_expert
-                FOR EACH ROW
-                EXECUTE FUNCTION update_expert_search_text();
-            """)
-            logger.info("Created search text update trigger")
+            try:
+                cur.execute("""
+                    DROP TRIGGER IF EXISTS expert_search_text_trigger ON experts_expert;
+                    CREATE TRIGGER expert_search_text_trigger
+                    BEFORE INSERT OR UPDATE ON experts_expert
+                    FOR EACH ROW
+                    EXECUTE FUNCTION update_expert_search_text();
+                """)
+                logger.info("Created search text update trigger")
+            except Exception as e:
+                logger.warning(f"Trigger creation warning: {e}")
 
-            # Create GIN indexes for array columns
-            cur.execute("""
-                CREATE INDEX IF NOT EXISTS idx_expert_domains ON experts_expert USING gin(normalized_domains);
-                CREATE INDEX IF NOT EXISTS idx_expert_fields ON experts_expert USING gin(normalized_fields);
-                CREATE INDEX IF NOT EXISTS idx_expert_skills ON experts_expert USING gin(normalized_skills);
-                CREATE INDEX IF NOT EXISTS idx_expert_keywords ON experts_expert USING gin(keywords);
-            """)
-            logger.info("Created GIN indexes for array columns")
+            # Create indexes
+            indexes = [
+                "CREATE INDEX IF NOT EXISTS idx_expert_domains ON experts_expert USING gin(normalized_domains)",
+                "CREATE INDEX IF NOT EXISTS idx_expert_fields ON experts_expert USING gin(normalized_fields)",
+                "CREATE INDEX IF NOT EXISTS idx_expert_skills ON experts_expert USING gin(normalized_skills)",
+                "CREATE INDEX IF NOT EXISTS idx_expert_keywords ON experts_expert USING gin(keywords)",
+                "CREATE INDEX IF NOT EXISTS idx_expert_search ON experts_expert USING gin(to_tsvector('english', COALESCE(search_text, '')))"
+            ]
+            
+            for index_sql in indexes:
+                try:
+                    cur.execute(index_sql)
+                    logger.info("Created index successfully")
+                except Exception as e:
+                    logger.warning(f"Index creation warning: {e}")
+                    continue
 
-            # Create text search index
-            cur.execute("""
-                CREATE INDEX IF NOT EXISTS idx_expert_search ON experts_expert USING gin(to_tsvector('english', COALESCE(search_text, '')));
-            """)
-            logger.info("Created text search index")
+            # Update existing rows
+            try:
+                cur.execute("UPDATE experts_expert SET last_updated = NOW();")
+                logger.info("Updated existing rows to trigger search text generation")
+            except Exception as e:
+                logger.warning(f"Row update warning: {e}")
 
-            # Update existing rows to populate search_text
-            cur.execute("""
-                UPDATE experts_expert SET last_updated = NOW();
-            """)
-            logger.info("Updated existing rows to trigger search text generation")
-
-            conn.commit()
-            logger.info("Fixed experts_expert table structure and handled all columns and indexes.")
+            logger.info("Fixed experts_expert table structure and handled all columns and indexes")
+            return True
         else:
             logger.warning("experts_expert table does not exist. It will be created when needed.")
+            return True
             
     except Exception as e:
-        conn.rollback()
         logger.error(f"Error fixing experts_expert table: {e}")
-        raise
+        return False
     finally:
         cur.close()
         conn.close()
 
 def create_tables():
     conn = get_db_connection()
+    conn.autocommit = True  # Switch to autocommit mode
     cur = conn.cursor()
     try:
-        cur.execute("CREATE EXTENSION IF NOT EXISTS \"uuid-ossp\";")
-        cur.execute("""
-            -- Existing tables
+        # Create extension in separate transaction
+        try:
+            cur.execute("CREATE EXTENSION IF NOT EXISTS \"uuid-ossp\";")
+            logger.info("UUID extension creation/verification completed")
+        except Exception as e:
+            logger.warning(f"UUID extension warning: {e}")
+
+        # Define all table creation statements
+        table_statements = [
+            """
             CREATE TABLE IF NOT EXISTS experts_expert (
                 id SERIAL PRIMARY KEY,
                 firstname VARCHAR(255) NOT NULL,
@@ -176,8 +203,9 @@ def create_tables():
                 bio TEXT,
                 email VARCHAR(200),
                 middle_name VARCHAR(200)
-            );
-
+            )
+            """,
+            """
             CREATE TABLE IF NOT EXISTS resources_resource (
                 id SERIAL PRIMARY KEY,
                 doi VARCHAR(255),
@@ -197,33 +225,37 @@ def create_tables():
                 identifiers JSONB,
                 created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
                 updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
-            );
-
-            -- New tables from the dump
+            )
+            """,
+            """
             CREATE TABLE IF NOT EXISTS auth_group (
                 id SERIAL PRIMARY KEY,
                 name VARCHAR(150)
-            );
-
+            )
+            """,
+            """
             CREATE TABLE IF NOT EXISTS auth_permission (
                 id SERIAL PRIMARY KEY,
                 name VARCHAR(255),
                 content_type_id INTEGER,
                 codename VARCHAR(100)
-            );
-
+            )
+            """,
+            """
             CREATE TABLE IF NOT EXISTS author_publication_ai (
                 author_id INTEGER,
                 doi VARCHAR(255)
-            );
-
+            )
+            """,
+            """
             CREATE TABLE IF NOT EXISTS authors_ai (
                 author_id SERIAL PRIMARY KEY,
                 name TEXT,
                 orcid VARCHAR(255),
                 author_identifier VARCHAR(255)
-            );
-
+            )
+            """,
+            """
             CREATE TABLE IF NOT EXISTS chat_chatbox (
                 id SERIAL PRIMARY KEY,
                 created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
@@ -231,8 +263,9 @@ def create_tables():
                 expert_from_id INTEGER,
                 expert_to_id INTEGER,
                 name VARCHAR(200)
-            );
-
+            )
+            """,
+            """
             CREATE TABLE IF NOT EXISTS chat_chatboxmessage (
                 id SERIAL PRIMARY KEY,
                 message TEXT,
@@ -242,8 +275,9 @@ def create_tables():
                 expert_from_id INTEGER,
                 expert_to_id INTEGER,
                 chatbox_id INTEGER
-            );
-
+            )
+            """,
+            """
             CREATE TABLE IF NOT EXISTS expertise_categories (
                 id SERIAL PRIMARY KEY,
                 expert_orcid TEXT,
@@ -252,15 +286,17 @@ def create_tables():
                 field TEXT,
                 subfield TEXT,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            );
-
+            )
+            """,
+            """
             CREATE TABLE IF NOT EXISTS publications_ai (
                 doi VARCHAR(255) PRIMARY KEY,
                 title TEXT,
                 abstract TEXT,
                 summary TEXT
-            );
-
+            )
+            """,
+            """
             CREATE TABLE IF NOT EXISTS roles_role (
                 id SERIAL PRIMARY KEY,
                 name VARCHAR(255),
@@ -270,13 +306,15 @@ def create_tables():
                 created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
                 updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
                 default_expert_role BOOLEAN DEFAULT FALSE
-            );
-
+            )
+            """,
+            """
             CREATE TABLE IF NOT EXISTS tags (
                 tag_id SERIAL PRIMARY KEY,
                 tag_name VARCHAR(255)
-            );
-
+            )
+            """,
+            """
             CREATE TABLE IF NOT EXISTS query_history_ai (
                 query_id SERIAL PRIMARY KEY,
                 query TEXT,
@@ -284,26 +322,17 @@ def create_tables():
                 result_count INTEGER,
                 search_type VARCHAR(50),
                 user_id TEXT
-            );
-
+            )
+            """,
+            """
             CREATE TABLE IF NOT EXISTS term_frequencies (
                 term VARCHAR(255) PRIMARY KEY,
                 frequency INTEGER DEFAULT 1,
                 expert_id INTEGER,
                 last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            );
-
-            -- Create basic indexes
-            CREATE INDEX IF NOT EXISTS idx_experts_name ON experts_expert (firstname, lastname);
-            CREATE INDEX IF NOT EXISTS idx_query_history_timestamp ON query_history_ai (timestamp DESC);
-            CREATE INDEX IF NOT EXISTS idx_query_history_user ON query_history_ai (user_id);
-            CREATE INDEX IF NOT EXISTS idx_chat_updated ON chat_chatbox (updated_at DESC);
-            CREATE INDEX IF NOT EXISTS idx_chat_message_created ON chat_chatboxmessage (created_at DESC);
-            CREATE INDEX IF NOT EXISTS idx_expertise_orcid ON expertise_categories (expert_orcid);
-            CREATE INDEX IF NOT EXISTS idx_publications_title ON publications_ai USING gin(to_tsvector('english', title));
-
-
-            -- Search Analytics Schema
+            )
+            """,
+            """
             CREATE TABLE IF NOT EXISTS search_logs (
                 id SERIAL PRIMARY KEY,
                 query TEXT NOT NULL,
@@ -316,8 +345,9 @@ def create_tables():
                 success_rate FLOAT,
                 page_number INTEGER DEFAULT 1,
                 filters JSONB
-            );
-
+            )
+            """,
+            """
             CREATE TABLE IF NOT EXISTS expert_searches (
                 id SERIAL PRIMARY KEY,
                 search_id INTEGER REFERENCES search_logs(id),
@@ -326,8 +356,9 @@ def create_tables():
                 clicked BOOLEAN DEFAULT FALSE,
                 click_timestamp TIMESTAMP,
                 session_duration INTERVAL
-            );
-
+            )
+            """,
+            """
             CREATE TABLE IF NOT EXISTS query_predictions (
                 id SERIAL PRIMARY KEY,
                 partial_query TEXT NOT NULL,
@@ -336,8 +367,9 @@ def create_tables():
                 timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 confidence_score FLOAT,
                 user_id VARCHAR(255)
-            );
-
+            )
+            """,
+            """
             CREATE TABLE IF NOT EXISTS search_sessions (
                 id SERIAL PRIMARY KEY,
                 user_id VARCHAR(255),
@@ -345,8 +377,9 @@ def create_tables():
                 end_timestamp TIMESTAMP,
                 query_count INTEGER DEFAULT 1,
                 successful_searches INTEGER DEFAULT 0
-            );
-
+            )
+            """,
+            """
             CREATE TABLE IF NOT EXISTS search_performance (
                 id SERIAL PRIMARY KEY,
                 timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -355,37 +388,9 @@ def create_tables():
                 error_rate FLOAT,
                 total_queries INTEGER,
                 unique_users INTEGER
-            );
-
-            -- Create indexes for search analytics
-            CREATE INDEX IF NOT EXISTS idx_search_logs_timestamp ON search_logs(timestamp);
-            CREATE INDEX IF NOT EXISTS idx_search_logs_user_id ON search_logs(user_id);
-            CREATE INDEX IF NOT EXISTS idx_search_logs_query ON search_logs(query);
-            CREATE INDEX IF NOT EXISTS idx_expert_searches_expert_id ON expert_searches(expert_id);
-            CREATE INDEX IF NOT EXISTS idx_query_predictions_partial ON query_predictions(partial_query);
-            CREATE INDEX IF NOT EXISTS idx_search_sessions_user_id ON search_sessions(user_id);
-
-            -- Create analytics views
-            CREATE OR REPLACE VIEW daily_search_metrics AS
-            SELECT 
-                DATE(timestamp) as date,
-                COUNT(*) as total_searches,
-                COUNT(DISTINCT user_id) as unique_users,
-                AVG(EXTRACT(EPOCH FROM response_time)) as avg_response_time_seconds,
-                SUM(CASE WHEN clicked THEN 1 ELSE 0 END)::FLOAT / COUNT(*) as click_through_rate
-            FROM search_logs
-            GROUP BY DATE(timestamp);
-
-            CREATE OR REPLACE VIEW expert_search_metrics AS
-            SELECT 
-                es.expert_id,
-                COUNT(*) as total_appearances,
-                AVG(es.rank_position) as avg_rank,
-                SUM(CASE WHEN es.clicked THEN 1 ELSE 0 END)::FLOAT / COUNT(*) as click_through_rate
-            FROM expert_searches es
-            GROUP BY es.expert_id;
-
-            -- Chat Service Tables
+            )
+            """,
+            """
             CREATE TABLE IF NOT EXISTS chat_sessions (
                 id SERIAL PRIMARY KEY,
                 session_id VARCHAR(255) UNIQUE NOT NULL,
@@ -396,8 +401,9 @@ def create_tables():
                 successful BOOLEAN DEFAULT TRUE,
                 created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
                 updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
-            );
-
+            )
+            """,
+            """
             CREATE TABLE IF NOT EXISTS chat_interactions (
                 id SERIAL PRIMARY KEY,
                 session_id VARCHAR(255) REFERENCES chat_sessions(session_id),
@@ -413,8 +419,9 @@ def create_tables():
                 context JSONB,
                 created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
                 updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
-            );
-
+            )
+            """,
+            """
             CREATE TABLE IF NOT EXISTS chat_analytics (
                 id SERIAL PRIMARY KEY,
                 interaction_id INTEGER REFERENCES chat_interactions(id),
@@ -425,17 +432,186 @@ def create_tables():
                 timestamp TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
                 created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
                 updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
-            );
+            )
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS expert_matching_logs (
+                id SERIAL PRIMARY KEY,
+                expert_id VARCHAR(255) NOT NULL,
+                matched_expert_id VARCHAR(255) NOT NULL,
+                similarity_score FLOAT,
+                shared_domains JSONB,
+                shared_fields INTEGER,
+                shared_skills INTEGER,
+                timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                successful BOOLEAN DEFAULT TRUE
+            )
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS domain_expertise_analytics (
+                id SERIAL PRIMARY KEY,
+                domain_name VARCHAR(255) NOT NULL UNIQUE,
+                field_name VARCHAR(255),
+                subfield_name VARCHAR(255),
+                expert_count INTEGER DEFAULT 0,
+                match_count INTEGER DEFAULT 0,
+                last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS expert_processing_logs (
+                id SERIAL PRIMARY KEY,
+                expert_id VARCHAR(255),
+                processing_time FLOAT,
+                domains_count INTEGER,
+                fields_count INTEGER,
+                success BOOLEAN,
+                error_message TEXT,
+                timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS expert_summary_logs (
+                id SERIAL PRIMARY KEY,
+                expert_id VARCHAR(255),
+                total_domains INTEGER,
+                total_fields INTEGER,
+                total_subfields INTEGER,
+                expertise_depth INTEGER,
+                timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS collaboration_history (
+                id SERIAL PRIMARY KEY,
+                expert_id VARCHAR(255) NOT NULL,
+                collaborator_id VARCHAR(255) NOT NULL,
+                collaboration_score FLOAT NOT NULL,
+                shared_domains JSONB,
+                result_type VARCHAR(50),
+                timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+            """
+        ]
 
-            -- Create indexes for chat tables
-            CREATE INDEX IF NOT EXISTS idx_chat_sessions_user ON chat_sessions(user_id);
-            CREATE INDEX IF NOT EXISTS idx_chat_sessions_timestamp ON chat_sessions(start_time);
-            CREATE INDEX IF NOT EXISTS idx_chat_interactions_session ON chat_interactions(session_id);
-            CREATE INDEX IF NOT EXISTS idx_chat_interactions_timestamp ON chat_interactions(timestamp);
-            CREATE INDEX IF NOT EXISTS idx_chat_analytics_interaction ON chat_analytics(interaction_id);
-            CREATE INDEX IF NOT EXISTS idx_chat_analytics_expert ON chat_analytics(expert_id);
+        # Create each table in a separate transaction
+        for table_sql in table_statements:
+            try:
+                cur.execute(table_sql)
+                logger.info("Table creation/verification completed successfully")
+            except Exception as e:
+                logger.warning(f"Table creation warning: {e}")
+                continue
 
-            -- Create analytics views for chat service
+        # Add type check and correction for shared_domains
+        try:
+            # Check if the column exists and get its type
+            cur.execute("""
+                SELECT data_type 
+                FROM information_schema.columns 
+                WHERE table_name = 'expert_matching_logs' 
+                AND column_name = 'shared_domains';
+            """)
+            current_type = cur.fetchone()
+            
+            if current_type and current_type[0].lower() == 'integer':
+                # Drop dependent view first
+                cur.execute("DROP VIEW IF EXISTS expert_matching_metrics CASCADE;")
+                
+                # Alter the column type
+                cur.execute("""
+                    ALTER TABLE expert_matching_logs 
+                    ALTER COLUMN shared_domains TYPE JSONB 
+                    USING CASE 
+                        WHEN shared_domains IS NULL THEN '[]'::jsonb
+                        ELSE jsonb_build_array(shared_domains::text)
+                    END;
+                """)
+                logger.info("Successfully altered shared_domains column to JSONB type")
+        except Exception as e:
+            logger.warning(f"Column alteration warning for expert_matching_logs.shared_domains: {e}")
+
+        # Add unique constraint to domain_expertise_analytics if it doesn't exist
+        try:
+            cur.execute("""
+                DO $$
+                BEGIN
+                    IF NOT EXISTS (
+                        SELECT 1
+                        FROM pg_constraint
+                        WHERE conname = 'domain_expertise_analytics_domain_name_key'
+                    ) THEN
+                        ALTER TABLE domain_expertise_analytics
+                        ADD CONSTRAINT domain_expertise_analytics_domain_name_key
+                        UNIQUE (domain_name);
+                    END IF;
+                END $$;
+            """)
+            logger.info("Successfully added unique constraint to domain_expertise_analytics.domain_name")
+        except Exception as e:
+            logger.warning(f"Constraint addition warning for domain_expertise_analytics: {e}")
+
+        # Define all index creation statements
+        index_statements = [
+            "CREATE INDEX IF NOT EXISTS idx_experts_name ON experts_expert (firstname, lastname)",
+            "CREATE INDEX IF NOT EXISTS idx_query_history_timestamp ON query_history_ai (timestamp DESC)",
+            "CREATE INDEX IF NOT EXISTS idx_query_history_user ON query_history_ai (user_id)",
+            "CREATE INDEX IF NOT EXISTS idx_chat_updated ON chat_chatbox (updated_at DESC)",
+            "CREATE INDEX IF NOT EXISTS idx_chat_message_created ON chat_chatboxmessage (created_at DESC)",
+            "CREATE INDEX IF NOT EXISTS idx_expertise_orcid ON expertise_categories (expert_orcid)",
+            "CREATE INDEX IF NOT EXISTS idx_publications_title ON publications_ai USING gin(to_tsvector('english', title))",
+            "CREATE INDEX IF NOT EXISTS idx_search_logs_timestamp ON search_logs(timestamp)",
+            "CREATE INDEX IF NOT EXISTS idx_search_logs_user_id ON search_logs(user_id)",
+            "CREATE INDEX IF NOT EXISTS idx_search_logs_query ON search_logs(query)",
+            "CREATE INDEX IF NOT EXISTS idx_expert_searches_expert_id ON expert_searches(expert_id)",
+            "CREATE INDEX IF NOT EXISTS idx_query_predictions_partial ON query_predictions(partial_query)",
+            "CREATE INDEX IF NOT EXISTS idx_search_sessions_user_id ON search_sessions(user_id)",
+            "CREATE INDEX IF NOT EXISTS idx_chat_sessions_user ON chat_sessions(user_id)",
+            "CREATE INDEX IF NOT EXISTS idx_chat_sessions_timestamp ON chat_sessions(start_time)",
+            "CREATE INDEX IF NOT EXISTS idx_chat_interactions_session ON chat_interactions(session_id)",
+            "CREATE INDEX IF NOT EXISTS idx_chat_interactions_timestamp ON chat_interactions(timestamp)",
+            "CREATE INDEX IF NOT EXISTS idx_chat_analytics_interaction ON chat_analytics(interaction_id)",
+            "CREATE INDEX IF NOT EXISTS idx_chat_analytics_expert ON chat_analytics(expert_id)",
+            "CREATE INDEX IF NOT EXISTS idx_matching_expert_id ON expert_matching_logs(expert_id)",
+            "CREATE INDEX IF NOT EXISTS idx_matching_matched_expert ON expert_matching_logs(matched_expert_id)",
+            "CREATE INDEX IF NOT EXISTS idx_domain_expertise_name ON domain_expertise_analytics(domain_name)",
+            "CREATE INDEX IF NOT EXISTS idx_collab_experts ON collaboration_history(expert_id, collaborator_id)",
+            "CREATE INDEX IF NOT EXISTS idx_domain_expertise_name_match ON domain_expertise_analytics(domain_name, match_count)"
+        ]
+
+        # Create each index in a separate transaction
+        for index_sql in index_statements:
+            try:
+                cur.execute(index_sql)
+                logger.info("Index creation/verification completed successfully")
+            except Exception as e:
+                logger.warning(f"Index creation warning: {e}")
+                continue
+
+        # Create views in separate transactions
+        view_statements = [
+            """
+            CREATE OR REPLACE VIEW daily_search_metrics AS
+            SELECT 
+                DATE(timestamp) as date,
+                COUNT(*) as total_searches,
+                COUNT(DISTINCT user_id) as unique_users,
+                AVG(EXTRACT(EPOCH FROM response_time)) as avg_response_time_seconds,
+                SUM(CASE WHEN clicked THEN 1 ELSE 0 END)::FLOAT / COUNT(*) as click_through_rate
+            FROM search_logs
+            GROUP BY DATE(timestamp)
+            """,
+            """
+            CREATE OR REPLACE VIEW expert_search_metrics AS
+            SELECT 
+                es.expert_id,
+                COUNT(*) as total_appearances,
+                AVG(es.rank_position) as avg_rank,
+                SUM(CASE WHEN es.clicked THEN 1 ELSE 0 END)::FLOAT / COUNT(*) as click_through_rate
+            FROM expert_searches es
+            GROUP BY es.expert_id
+            """,
+            """
             CREATE OR REPLACE VIEW chat_daily_metrics AS
             SELECT 
                 DATE(timestamp) as date,
@@ -445,8 +621,9 @@ def create_tables():
                 AVG(response_time) as avg_response_time,
                 SUM(CASE WHEN error_occurred THEN 1 ELSE 0 END)::FLOAT / COUNT(*) as error_rate
             FROM chat_interactions
-            GROUP BY DATE(timestamp);
-
+            GROUP BY DATE(timestamp)
+            """,
+            """
             CREATE OR REPLACE VIEW chat_expert_matching_metrics AS
             SELECT 
                 ca.expert_id,
@@ -455,46 +632,100 @@ def create_tables():
                 AVG(ca.rank_position) as avg_rank,
                 SUM(CASE WHEN ca.clicked THEN 1 ELSE 0 END)::FLOAT / COUNT(*) as click_through_rate
             FROM chat_analytics ca
-            GROUP BY ca.expert_id;
+            GROUP BY ca.expert_id
+            """,
+            """
+            CREATE OR REPLACE VIEW expert_matching_metrics AS
+            SELECT 
+                expert_id,
+                COUNT(*) as total_matches,
+                AVG(similarity_score) as avg_similarity,
+                AVG(CAST(jsonb_array_length(shared_domains) AS FLOAT)) as avg_shared_domains,
+                COUNT(DISTINCT matched_expert_id) as unique_matches,
+                SUM(CASE WHEN successful THEN 1 ELSE 0 END)::FLOAT / COUNT(*) as success_rate
+            FROM expert_matching_logs
+            GROUP BY expert_id
+            """,
+            """
+            CREATE OR REPLACE VIEW domain_matching_metrics AS
+            SELECT 
+                d.domain_name,
+                d.expert_count,
+                d.match_count,
+                d.match_count::FLOAT / NULLIF(d.expert_count, 0) as match_rate,
+                COUNT(DISTINCT em.expert_id) as active_experts
+            FROM domain_expertise_analytics d
+            LEFT JOIN expert_matching_logs em 
+                ON em.timestamp >= NOW() - interval '30 days'
+            GROUP BY d.domain_name, d.expert_count, d.match_count
+            """
+        ]
 
-            -- Create function to update timestamps
-            CREATE OR REPLACE FUNCTION update_timestamp_column()
+        # Create each view in a separate transaction
+        for view_sql in view_statements:
+            try:
+                cur.execute(view_sql)
+                logger.info("View creation/verification completed successfully")
+            except Exception as e:
+                logger.warning(f"View creation warning: {e}")
+                continue
+
+        # Create trigger function
+        trigger_function = """
+            CREATE OR REPLACE FUNCTION update_domain_match_count()
             RETURNS TRIGGER AS $$
             BEGIN
-                NEW.updated_at = CURRENT_TIMESTAMP;
+                IF NEW.shared_domains IS NOT NULL THEN
+                    IF jsonb_typeof(NEW.shared_domains) = 'array' THEN
+                        UPDATE domain_expertise_analytics
+                        SET match_count = match_count + 1,
+                            last_updated = CURRENT_TIMESTAMP
+                        WHERE domain_name IN (
+                            SELECT value::text
+                            FROM jsonb_array_elements_text(NEW.shared_domains)
+                        );
+                    ELSE
+                        UPDATE domain_expertise_analytics
+                        SET match_count = match_count + 1,
+                            last_updated = CURRENT_TIMESTAMP
+                        WHERE domain_name = NEW.shared_domains::text;
+                    END IF;
+                END IF;
                 RETURN NEW;
             END;
-            $$ language 'plpgsql';
+            $$ LANGUAGE plpgsql;
+        """
 
-            -- Create triggers for timestamp updates
-            DROP TRIGGER IF EXISTS update_chat_sessions_timestamp ON chat_sessions;
-            CREATE TRIGGER update_chat_sessions_timestamp
-                BEFORE UPDATE ON chat_sessions
-                FOR EACH ROW
-                EXECUTE FUNCTION update_timestamp_column();
+        # Create trigger function in separate transaction
+        try:
+            cur.execute(trigger_function)
+            logger.info("Trigger function creation completed successfully")
+        except Exception as e:
+            logger.warning(f"Trigger function creation warning: {e}")
 
-            DROP TRIGGER IF EXISTS update_chat_interactions_timestamp ON chat_interactions;
-            CREATE TRIGGER update_chat_interactions_timestamp
-                BEFORE UPDATE ON chat_interactions
-                FOR EACH ROW
-                EXECUTE FUNCTION update_timestamp_column();
+        # Create trigger
+        try:
+            cur.execute("DROP TRIGGER IF EXISTS trigger_update_domain_matches ON expert_matching_logs;")
+            cur.execute("""
+                CREATE TRIGGER trigger_update_domain_matches
+                    AFTER INSERT ON expert_matching_logs
+                    FOR EACH ROW
+                    EXECUTE FUNCTION update_domain_match_count();
+            """)
+            logger.info("Trigger creation completed successfully")
+        except Exception as e:
+            logger.warning(f"Trigger creation warning: {e}")
 
-            DROP TRIGGER IF EXISTS update_chat_analytics_timestamp ON chat_analytics;
-            CREATE TRIGGER update_chat_analytics_timestamp
-                BEFORE UPDATE ON chat_analytics
-                FOR EACH ROW
-                EXECUTE FUNCTION update_timestamp_column();
-        
-        """)
-        conn.commit()
-        logger.info("All tables created successfully")
+        logger.info("All database objects created/verified successfully")
+        return True
+
     except Exception as e:
-        conn.rollback()
-        logger.error(f"Error creating tables: {e}")
-        raise
+        logger.error(f"Error in database initialization: {e}")
+        return False
     finally:
         cur.close()
         conn.close()
+
 
 def load_initial_experts(expertise_csv: str):
     conn = get_db_connection()
@@ -531,6 +762,7 @@ def load_initial_experts(expertise_csv: str):
     finally:
         cur.close()
         conn.close()
+
 
 if __name__ == "__main__":
     create_database_if_not_exists()
