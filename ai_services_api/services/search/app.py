@@ -15,39 +15,6 @@ class UnifiedAnalyticsDashboard:
         self.db = DatabaseConnector()
         self.conn = self.db.get_connection()
 
-    def main(self):
-        st.set_page_config(page_title="APHRC Analytics Dashboard", layout="wide")
-        st.title("APHRC Analytics Dashboard")
-
-        # Sidebar filters
-        self.create_sidebar_filters()
-
-        # Top-level metrics
-        self.display_overall_metrics()
-
-        # Tabs for different analytics sections
-        tabs = st.tabs([
-            "Chat Analytics", 
-            "Search Analytics", 
-            "Expert Analytics", 
-            "User Behavior", 
-            "Domain Analytics", 
-            "Recommendation Network"
-        ])
-        
-        with tabs[0]:
-            self.display_chat_analytics()
-        with tabs[1]:
-            self.display_search_analytics()
-        with tabs[2]:
-            self.display_expert_analytics()
-        with tabs[3]:
-            self.display_user_behavior()
-        with tabs[4]:
-            self.display_domain_analytics()
-        with tabs[5]:
-            self.display_recommendation_network()
-
     def create_sidebar_filters(self):
         st.sidebar.title("Filters")
         
@@ -61,11 +28,11 @@ class UnifiedAnalyticsDashboard:
             datetime.now()
         )
 
-        # Analytics type filter
-        self.analytics_type = st.sidebar.multiselect(
+        # Changed to dropdown
+        self.analytics_type = st.sidebar.selectbox(
             "Analytics Type",
             ["chat", "search", "expert matching"],
-            default=["chat", "search", "expert matching"]
+            index=0  # Default to first option
         )
 
         # Additional recommendation network filters
@@ -79,6 +46,72 @@ class UnifiedAnalyticsDashboard:
             "Number of Experts to Show",
             5, 50, 20
         )
+
+    def get_expert_metrics(self) -> pd.DataFrame:
+        cursor = self.conn.cursor()
+        try:
+            cursor.execute("""
+                WITH ChatExperts AS (
+                    SELECT 
+                        a.expert_id,
+                        COUNT(*) as chat_matches,
+                        AVG(a.similarity_score) as chat_similarity,
+                        SUM(CASE WHEN a.clicked THEN 1 ELSE 0 END)::FLOAT / COUNT(*) as chat_click_rate
+                    FROM chat_analytics a
+                    JOIN chat_interactions i ON a.interaction_id = i.id
+                    WHERE i.timestamp BETWEEN %s AND %s
+                    GROUP BY a.expert_id
+                ),
+                SearchExperts AS (
+                    SELECT 
+                        expert_id,
+                        COUNT(*) as search_matches,
+                        AVG(rank_position) as avg_rank,
+                        SUM(CASE WHEN expert_searches.clicked THEN 1 ELSE 0 END)::FLOAT / COUNT(*) as search_click_rate
+                    FROM expert_searches
+                    JOIN search_logs sl ON expert_searches.search_id = sl.id
+                    WHERE sl.timestamp BETWEEN %s AND %s
+                    GROUP BY expert_id
+                )
+                SELECT 
+                    e.firstname || ' ' || e.lastname as expert_name,
+                    e.unit,
+                    COALESCE(ce.chat_matches, 0) as chat_matches,
+                    COALESCE(ce.chat_similarity, 0) as chat_similarity,
+                    COALESCE(ce.chat_click_rate, 0) as chat_click_rate,
+                    COALESCE(se.search_matches, 0) as search_matches,
+                    COALESCE(se.avg_rank, 0) as search_avg_rank,
+                    COALESCE(se.search_click_rate, 0) as search_click_rate
+                FROM experts_expert e
+                LEFT JOIN ChatExperts ce ON e.id::text = ce.expert_id
+                LEFT JOIN SearchExperts se ON e.id::text = se.expert_id
+                WHERE e.is_active = true
+                ORDER BY (COALESCE(ce.chat_matches, 0) + COALESCE(se.search_matches, 0)) DESC
+            """, (self.start_date, self.end_date, self.start_date, self.end_date))
+            
+            columns = [desc[0] for desc in cursor.description]
+            data = cursor.fetchall()
+            return pd.DataFrame(data, columns=columns)
+        finally:
+            cursor.close()
+
+    def main(self):
+        st.set_page_config(page_title="APHRC Analytics Dashboard", layout="wide")
+        st.title("APHRC Analytics Dashboard")
+
+        # Sidebar filters
+        self.create_sidebar_filters()
+
+        # Display analytics based on selected type
+        self.display_overall_metrics()
+
+        if self.analytics_type == "chat":
+            self.display_chat_analytics()
+        elif self.analytics_type == "search":
+            self.display_search_analytics()
+        else:  # expert matching
+            self.display_expert_analytics()
+            self.display_recommendation_network()
 
     def get_chat_metrics(self) -> Dict[str, Any]:
         cursor = self.conn.cursor()
@@ -138,54 +171,6 @@ class UnifiedAnalyticsDashboard:
                 GROUP BY DATE(timestamp)
                 ORDER BY date
             """, (self.start_date, self.end_date))
-            
-            columns = [desc[0] for desc in cursor.description]
-            data = cursor.fetchall()
-            return pd.DataFrame(data, columns=columns)
-        finally:
-            cursor.close()
-
-    def get_expert_metrics(self) -> pd.DataFrame:
-        cursor = self.conn.cursor()
-        try:
-            cursor.execute("""
-                WITH ChatExperts AS (
-                    SELECT 
-                        a.expert_id,
-                        COUNT(*) as chat_matches,
-                        AVG(a.similarity_score) as chat_similarity,
-                        SUM(CASE WHEN a.clicked THEN 1 ELSE 0 END)::FLOAT / COUNT(*) as chat_click_rate
-                    FROM chat_analytics a
-                    JOIN chat_interactions i ON a.interaction_id = i.id
-                    WHERE i.timestamp BETWEEN %s AND %s
-                    GROUP BY a.expert_id
-                ),
-                SearchExperts AS (
-                    SELECT 
-                        expert_id,
-                        COUNT(*) as search_matches,
-                        AVG(rank_position) as avg_rank,
-                        SUM(CASE WHEN clicked THEN 1 ELSE 0 END)::FLOAT / COUNT(*) as search_click_rate
-                    FROM expert_searches
-                    JOIN search_logs sl ON expert_searches.search_id = sl.id
-                    WHERE sl.timestamp BETWEEN %s AND %s
-                    GROUP BY expert_id
-                )
-                SELECT 
-                    e.firstname || ' ' || e.lastname as expert_name,
-                    e.unit,
-                    COALESCE(ce.chat_matches, 0) as chat_matches,
-                    COALESCE(ce.chat_similarity, 0) as chat_similarity,
-                    COALESCE(ce.chat_click_rate, 0) as chat_click_rate,
-                    COALESCE(se.search_matches, 0) as search_matches,
-                    COALESCE(se.avg_rank, 0) as search_avg_rank,
-                    COALESCE(se.search_click_rate, 0) as search_click_rate
-                FROM experts_expert e
-                LEFT JOIN ChatExperts ce ON e.id::text = ce.expert_id
-                LEFT JOIN SearchExperts se ON e.id::text = se.expert_id
-                WHERE e.is_active = true
-                ORDER BY (COALESCE(ce.chat_matches, 0) + COALESCE(se.search_matches, 0)) DESC
-            """, (self.start_date, self.end_date, self.start_date, self.end_date))
             
             columns = [desc[0] for desc in cursor.description]
             data = cursor.fetchall()
