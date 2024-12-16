@@ -50,32 +50,29 @@ class ExpertSearchIndexManager:
             decode_responses=False
         )
 
-    def store_in_redis(self, key: str, embedding: np.ndarray, metadata: dict):
-        """Store expert embedding and metadata in Redis."""
-        try:
-            pipeline = self.redis_binary.pipeline()
-            
-            # Handle null values in metadata
-            for k, value in metadata.items():
-                if value is None:
-                    metadata[k] = ''
-            
-            pipeline.hset(
-                f"expert:{key}",
-                mapping={
-                    'vector': embedding.tobytes(),
-                    'metadata': json.dumps(metadata)
-                }
-            )
-            pipeline.execute()
-        except Exception as e:
-            logger.error(f"Error storing expert in Redis: {e}")
+    def create_expert_text(self, expert: Dict[str, Any]) -> str:
+        """Create searchable text from expert data."""
+        specialties = expert['specialties']
+        text_parts = [
+            f"Name: {expert['name']}",
+            f"Designation: {expert['designation']}",
+            f"Theme: {expert['theme']}",
+            f"Unit: {expert['unit']}",
+            f"Contact: {expert['contact']}",
+            f"Bio: {expert.get('bio', '')}",
+            f"Expertise: {' | '.join(specialties['expertise'])}",
+            f"Domains: {' | '.join(specialties['domains'])}",
+            f"Fields: {' | '.join(specialties['fields'])}",
+            f"Subfields: {' | '.join(specialties['subfields'])}",
+            f"Status: {'Active' if expert['is_active'] else 'Inactive'}"
+        ]
+        return '\n'.join(text_parts)
 
     def fetch_experts(self) -> List[Dict[str, Any]]:
         """Fetch all experts with retry logic."""
         max_retries = 3
         retry_delay = 5
-
+        
         for attempt in range(max_retries):
             try:
                 conn = self.db.get_connection()
@@ -94,7 +91,7 @@ class ExpertSearchIndexManager:
                             continue
                         return []
                     
-                    # Fetch expert data - now including is_active
+                    # Fetch expert data
                     cur.execute("""
                         SELECT 
                             id,
@@ -109,10 +106,11 @@ class ExpertSearchIndexManager:
                             domains,
                             fields,
                             subfields,
-                            is_active
+                            is_active,
+                            bio
                         FROM experts_expert
                         WHERE id IS NOT NULL
-                        AND is_active = true  -- Only fetch active experts
+                        AND is_active = true
                     """)
                     rows = cur.fetchall()
                     
@@ -133,7 +131,9 @@ class ExpertSearchIndexManager:
                                     'subfields': row[11] if row[11] else []
                                 },
                                 'orcid': row[8],
-                                'is_active': row[12]
+                                'is_active': row[12],
+                                'bio': row[13] or '',
+                                'knowledge_expertise': row[7] if isinstance(row[7], list) else json.loads(row[7]) if row[7] else []
                             }
                             experts.append(expert)
                         except Exception as e:
@@ -152,22 +152,37 @@ class ExpertSearchIndexManager:
                 if 'conn' in locals():
                     conn.close()
 
-    def create_expert_text(self, expert: Dict[str, Any]) -> str:
-        """Create searchable text from expert data."""
-        specialties = expert['specialties']
-        text_parts = [
-            f"Name: {expert['name']}",
-            f"Designation: {expert['designation']}",
-            f"Theme: {expert['theme']}",
-            f"Unit: {expert['unit']}",
-            f"Contact: {expert['contact']}",  # Added contact details
-            f"Expertise: {' | '.join(specialties['expertise'])}",
-            f"Domains: {' | '.join(specialties['domains'])}",
-            f"Fields: {' | '.join(specialties['fields'])}",
-            f"Subfields: {' | '.join(specialties['subfields'])}",
-            f"Status: {'Active' if expert['is_active'] else 'Inactive'}"  # Added active status
-        ]
-        return '\n'.join(text_parts)
+    def store_in_redis(self, key: str, embedding: np.ndarray, metadata: dict):
+        """Store expert embedding and metadata in Redis."""
+        try:
+            pipeline = self.redis_binary.pipeline()
+            
+            # Handle null values in metadata
+            for k, value in metadata.items():
+                if value is None:
+                    metadata[k] = ''
+            
+            pipeline.hset(
+                f"expert:{key}",
+                mapping={
+                    'vector': embedding.tobytes(),
+                    'metadata': json.dumps({
+                        'id': metadata['id'],
+                        'name': metadata['name'],
+                        'designation': metadata['designation'],
+                        'theme': metadata['theme'],
+                        'unit': metadata['unit'],
+                        'contact': metadata['contact'],
+                        'specialties': metadata['specialties'],
+                        'is_active': metadata['is_active'],
+                        'bio': metadata.get('bio', ''),
+                        'knowledge_expertise': metadata.get('knowledge_expertise', [])
+                    })
+                }
+            )
+            pipeline.execute()
+        except Exception as e:
+            logger.error(f"Error storing expert in Redis: {e}")
 
     def create_faiss_index(self) -> bool:
         """Create FAISS index for expert search."""
@@ -200,9 +215,9 @@ class ExpertSearchIndexManager:
                         'designation': expert['designation'],
                         'theme': expert['theme'],
                         'unit': expert['unit'],
-                        'contact': expert['contact'],  # Added contact to metadata
+                        'contact': expert['contact'],
                         'specialties': expert['specialties'],
-                        'is_active': expert['is_active']  # Added active status to metadata
+                        'is_active': expert['is_active']
                     }
                 )
                 
@@ -278,8 +293,14 @@ class ExpertSearchIndexManager:
 def initialize_expert_search():
     """Initialize expert search index."""
     try:
+        logger.info("Creating FAISS search index...")
         manager = ExpertSearchIndexManager()
-        return manager.create_faiss_index()
+        success = manager.create_faiss_index()
+        if not success:
+            logger.error("FAISS index creation failed")
+            return False
+        logger.info("FAISS search index created successfully")
+        return True
     except Exception as e:
         logger.error(f"Error initializing expert search: {e}")
         return False

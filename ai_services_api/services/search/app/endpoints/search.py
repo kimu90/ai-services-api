@@ -22,6 +22,8 @@ class ExpertSearchResult(BaseModel):
     contact: str
     is_active: bool
     score: float = None
+    bio: str = None  
+    knowledge_expertise: List[str] = []  
 
 class SearchResponse(BaseModel):
     total_results: int
