@@ -6,7 +6,7 @@ from ai_services_api.controllers.chatbot_router import api_router as chatbot_rou
 from ai_services_api.controllers.search_router import api_router as search_router
 from ai_services_api.controllers.recommendation_router import api_router as recommendation_router
 from ai_services_api.controllers.content_router import api_router as content_router
-
+from ai_services_api.controllers.message_router import api_router as message_router
 # Create the FastAPI app instance
 app = FastAPI(title="AI Services Platform", version="0.0.1")
 
@@ -24,7 +24,7 @@ app.include_router(chatbot_router, prefix="/chatbot")
 app.include_router(recommendation_router, prefix="/recommendation")
 app.include_router(search_router, prefix="/search")
 app.include_router(content_router, prefix="/content/api")  # Changed to avoid conflict with dashboard
-
+app.include_router(message_router, prefix="/message")
 # Serve static files if needed
 # app.mount("/static", StaticFiles(directory="static"), name="static")
 

@@ -348,6 +348,17 @@ def create_tables():
             )
             """,
             """
+            CREATE TABLE IF NOT EXISTS expert_messages (
+                id SERIAL PRIMARY KEY,
+                sender_id INTEGER REFERENCES experts_expert(id),
+                receiver_id INTEGER REFERENCES experts_expert(id),
+                content TEXT,
+                draft BOOLEAN DEFAULT TRUE,
+                created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+            )
+            """,
+            """
             CREATE TABLE IF NOT EXISTS expert_searches (
                 id SERIAL PRIMARY KEY,
                 search_id INTEGER REFERENCES search_logs(id),
@@ -576,7 +587,12 @@ def create_tables():
             "CREATE INDEX IF NOT EXISTS idx_matching_matched_expert ON expert_matching_logs(matched_expert_id)",
             "CREATE INDEX IF NOT EXISTS idx_domain_expertise_name ON domain_expertise_analytics(domain_name)",
             "CREATE INDEX IF NOT EXISTS idx_collab_experts ON collaboration_history(expert_id, collaborator_id)",
-            "CREATE INDEX IF NOT EXISTS idx_domain_expertise_name_match ON domain_expertise_analytics(domain_name, match_count)"
+            "CREATE INDEX IF NOT EXISTS idx_domain_expertise_name_match ON domain_expertise_analytics(domain_name, match_count)",
+            "CREATE INDEX IF NOT EXISTS idx_messages_sender ON expert_messages(sender_id)",
+            "CREATE INDEX IF NOT EXISTS idx_messages_receiver ON expert_messages(receiver_id)",
+            "CREATE INDEX IF NOT EXISTS idx_messages_created_at ON expert_messages(created_at DESC)"
+
+
         ]
 
         # Create each index in a separate transaction
