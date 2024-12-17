@@ -115,15 +115,15 @@ async def insert_expert(conn, expert_data: Dict[str, Any]):
             
             # Extract name components
             full_name = expert_data.get('display_name', '').split()
-            firstname = full_name[0] if full_name else 'Unknown'
-            lastname = ' '.join(full_name[1:]) if len(full_name) > 1 else 'Unknown'
+            first_name = full_name[0] if full_name else 'Unknown'
+            last_name = ' '.join(full_name[1:]) if len(full_name) > 1 else 'Unknown'
             
             # Insert with JSONB handling
             cur.execute("""
                 INSERT INTO experts_expert (
                     id,
-                    firstname,
-                    lastname,
+                    first_name,
+                    last_name,
                     knowledge_expertise,
                     domains,
                     fields,
@@ -134,8 +134,8 @@ async def insert_expert(conn, expert_data: Dict[str, Any]):
                     %s, %s, %s, %s::jsonb, %s::jsonb, %s::jsonb, %s::jsonb, %s::jsonb, NOW()
                 )
                 ON CONFLICT (id) DO UPDATE SET
-                    firstname = EXCLUDED.firstname,
-                    lastname = EXCLUDED.lastname,
+                    first_name = EXCLUDED.first_name,
+                    last_name = EXCLUDED.last_name,
                     knowledge_expertise = EXCLUDED.knowledge_expertise,
                     domains = EXCLUDED.domains,
                     fields = EXCLUDED.fields,
@@ -144,8 +144,8 @@ async def insert_expert(conn, expert_data: Dict[str, Any]):
                     last_updated = NOW()
             """, (
                 expert_data.get('id'),
-                firstname,
-                lastname,
+                first_name,
+                last_name,
                 expertise_jsonb,
                 json.dumps(expert_data.get('domains', [])),
                 json.dumps(expert_data.get('fields', [])),
@@ -182,8 +182,8 @@ async def get_expert(conn, expert_id: str) -> Optional[Dict[str, Any]]:
             cur.execute("""
                 SELECT 
                     id,
-                    firstname,
-                    lastname,
+                    first_name,
+                    last_name,
                     knowledge_expertise,
                     domains,
                     fields,
@@ -198,8 +198,8 @@ async def get_expert(conn, expert_id: str) -> Optional[Dict[str, Any]]:
             if result:
                 return {
                     'id': result[0],
-                    'firstname': result[1],
-                    'lastname': result[2],
+                    'first_name': result[1],
+                    'last_name': result[2],
                     'knowledge_expertise': result[3],
                     'domains': result[4],
                     'fields': result[5],
@@ -284,8 +284,8 @@ async def get_expert(conn, expert_id: str) -> Optional[Dict[str, Any]]:
             cur.execute("""
                 SELECT 
                     id,
-                    firstname,
-                    lastname,
+                    first_name,
+                    last_name,
                     knowledge_expertise,
                     domains,
                     fields,
@@ -303,8 +303,8 @@ async def get_expert(conn, expert_id: str) -> Optional[Dict[str, Any]]:
             if result:
                 return {
                     'id': result[0],
-                    'firstname': result[1],
-                    'lastname': result[2],
+                    'first_name': result[1],
+                    'last_name': result[2],
                     'knowledge_expertise': result[3],
                     'domains': result[4],
                     'fields': result[5],
@@ -330,8 +330,8 @@ async def search_experts(conn, query: str, limit: int = 10) -> List[Dict[str, An
             cur.execute("""
                 SELECT 
                     id,
-                    firstname,
-                    lastname,
+                    first_name,
+                    last_name,
                     knowledge_expertise,
                     normalized_domains,
                     normalized_fields,
@@ -352,8 +352,8 @@ async def search_experts(conn, query: str, limit: int = 10) -> List[Dict[str, An
             for result in results:
                 experts.append({
                     'id': result[0],
-                    'firstname': result[1],
-                    'lastname': result[2],
+                    'first_name': result[1],
+                    'last_name': result[2],
                     'knowledge_expertise': result[3],
                     'normalized_domains': result[4],
                     'normalized_fields': result[5],

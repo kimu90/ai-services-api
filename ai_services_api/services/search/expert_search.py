@@ -98,8 +98,8 @@ class ExpertSearchIndexManager:
                     cur.execute("""
                         SELECT 
                             id,
-                            firstname,
-                            lastname,
+                            first_name,
+                            last_name,
                             designation,
                             theme,
                             unit,

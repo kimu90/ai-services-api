@@ -30,10 +30,10 @@ class UnifiedAnalyticsDashboard:
 
         # Changed to dropdown
         self.analytics_type = st.sidebar.selectbox(
-            "Analytics Type",
-            ["chat", "search", "expert matching"],
-            index=0  # Default to first option
-        )
+        "Analytics Type",
+        ["chat", "search", "expert matching", "sentiment"],  # Added sentiment
+        index=0
+    )
 
         # Additional recommendation network filters
         self.min_similarity = st.sidebar.slider(
@@ -74,7 +74,7 @@ class UnifiedAnalyticsDashboard:
                     GROUP BY expert_id
                 )
                 SELECT 
-                    e.firstname || ' ' || e.lastname as expert_name,
+                    e.first_name || ' ' || e.last_name as expert_name,
                     e.unit,
                     COALESCE(ce.chat_matches, 0) as chat_matches,
                     COALESCE(ce.chat_similarity, 0) as chat_similarity,
@@ -109,6 +109,8 @@ class UnifiedAnalyticsDashboard:
             self.display_chat_analytics()
         elif self.analytics_type == "search":
             self.display_search_analytics()
+        elif self.analytics_type == "sentiment":  # New condition
+            self.display_sentiment_analytics()
         else:  # expert matching
             self.display_expert_analytics()
             self.display_recommendation_network()
@@ -170,6 +172,34 @@ class UnifiedAnalyticsDashboard:
                 WHERE timestamp BETWEEN %s AND %s
                 GROUP BY DATE(timestamp)
                 ORDER BY date
+            """, (self.start_date, self.end_date))
+            
+            columns = [desc[0] for desc in cursor.description]
+            data = cursor.fetchall()
+            return pd.DataFrame(data, columns=columns)
+        finally:
+            cursor.close()
+
+    def get_sentiment_metrics(self) -> pd.DataFrame:
+        cursor = self.conn.cursor()
+        try:
+            cursor.execute("""
+                WITH SentimentData AS (
+                    SELECT 
+                        DATE(sm.timestamp) as date,
+                        AVG(sm.sentiment_score) as avg_sentiment,
+                        AVG(sm.satisfaction_score) as satisfaction_score,
+                        AVG(sm.urgency_score) as urgency_score,
+                        AVG(sm.clarity_score) as clarity_score,
+                        MODE() WITHIN GROUP (UNNEST(emotion_labels)) as common_emotion,
+                        COUNT(*) as total_interactions
+                    FROM sentiment_metrics sm
+                    WHERE sm.timestamp BETWEEN %s AND %s
+                    GROUP BY DATE(sm.timestamp)
+                    ORDER BY date
+                )
+                SELECT *
+                FROM SentimentData
             """, (self.start_date, self.end_date))
             
             columns = [desc[0] for desc in cursor.description]
@@ -255,6 +285,174 @@ class UnifiedAnalyticsDashboard:
                     title="Error Rate"
                 )
             )
+
+    def display_sentiment_analytics(self):
+        st.subheader("Sentiment Analytics")
+        
+        # Get sentiment metrics
+        sentiment_data = self.get_sentiment_metrics()
+        
+        # 1. Overall Metrics Cards
+        col1, col2, col3, col4 = st.columns(4)
+        with col1:
+            st.metric(
+                "Average Sentiment",
+                f"{sentiment_data['avg_sentiment'].mean():.2f}",
+                f"{(sentiment_data['avg_sentiment'].diff().mean() * 100):.1f}%"
+            )
+        with col2:
+            st.metric(
+                "Average Satisfaction",
+                f"{sentiment_data['satisfaction_score'].mean():.2f}",
+                f"{(sentiment_data['satisfaction_score'].diff().mean() * 100):.1f}%"
+            )
+        with col3:
+            st.metric(
+                "Average Clarity",
+                f"{sentiment_data['clarity_score'].mean():.2f}",
+                f"{(sentiment_data['clarity_score'].diff().mean() * 100):.1f}%"
+            )
+        with col4:
+            st.metric(
+                "Total Interactions",
+                f"{sentiment_data['total_interactions'].sum():,}",
+                f"{(sentiment_data['total_interactions'].diff().mean()):.0f}/day"
+            )
+
+        # 2. Main Sentiment Trend with Range Selector
+        fig = go.Figure()
+        fig.add_trace(go.Scatter(
+            x=sentiment_data['date'],
+            y=sentiment_data['avg_sentiment'],
+            mode='lines+markers',
+            name='Sentiment',
+            line=dict(color='rgb(49, 130, 189)'),
+            fill='tonexty'
+        ))
+        fig.update_layout(
+            title='Sentiment Trend Over Time',
+            xaxis=dict(
+                rangeselector=dict(
+                    buttons=list([
+                        dict(count=7, label="1w", step="day", stepmode="backward"),
+                        dict(count=1, label="1m", step="month", stepmode="backward"),
+                        dict(count=3, label="3m", step="month", stepmode="backward"),
+                        dict(step="all")
+                    ])
+                )
+            ),
+            yaxis=dict(title='Average Sentiment Score')
+        )
+        st.plotly_chart(fig, use_container_width=True)
+
+        # 3. Sentiment Components Comparison
+        col1, col2 = st.columns(2)
+        with col1:
+            # Radar Chart for Average Scores
+            categories = ['Sentiment', 'Satisfaction', 'Urgency', 'Clarity']
+            values = [
+                sentiment_data['avg_sentiment'].mean(),
+                sentiment_data['satisfaction_score'].mean(),
+                sentiment_data['urgency_score'].mean(),
+                sentiment_data['clarity_score'].mean()
+            ]
+            
+            fig = go.Figure(data=go.Scatterpolar(
+                r=values,
+                theta=categories,
+                fill='toself'
+            ))
+            fig.update_layout(
+                polar=dict(radialaxis=dict(visible=True, range=[0, 1])),
+                showlegend=False,
+                title='Average Sentiment Components'
+            )
+            st.plotly_chart(fig)
+
+        with col2:
+            # Emotion Distribution Over Time
+            emotion_pivot = pd.crosstab(
+                sentiment_data['date'],
+                sentiment_data['common_emotion'],
+                normalize='index'
+            )
+            
+            fig = px.area(
+                emotion_pivot,
+                title='Emotion Distribution Trend',
+                labels={'value': 'Proportion', 'variable': 'Emotion'}
+            )
+            st.plotly_chart(fig)
+
+        # 4. Correlation Heatmap
+        correlation_data = sentiment_data[[
+            'avg_sentiment',
+            'satisfaction_score',
+            'urgency_score',
+            'clarity_score',
+            'total_interactions'
+        ]].corr()
+
+        fig = px.imshow(
+            correlation_data,
+            title='Correlation Between Metrics',
+            color_continuous_scale='RdBu_r',
+            aspect='auto'
+        )
+        st.plotly_chart(fig)
+
+        # 5. Hourly Analysis
+        cursor = self.conn.cursor()
+        try:
+            cursor.execute("""
+                SELECT 
+                    EXTRACT(HOUR FROM timestamp) as hour,
+                    AVG(sentiment_score) as avg_sentiment,
+                    AVG(satisfaction_score) as avg_satisfaction,
+                    COUNT(*) as interaction_count
+                FROM sentiment_metrics
+                WHERE timestamp BETWEEN %s AND %s
+                GROUP BY EXTRACT(HOUR FROM timestamp)
+                ORDER BY hour
+            """, (self.start_date, self.end_date))
+            
+            hourly_data = pd.DataFrame(cursor.fetchall(), 
+                                    columns=['hour', 'avg_sentiment', 'avg_satisfaction', 'interaction_count'])
+
+            fig = go.Figure()
+            fig.add_trace(go.Scatter(
+                x=hourly_data['hour'],
+                y=hourly_data['avg_sentiment'],
+                name='Sentiment',
+                mode='lines+markers'
+            ))
+            fig.add_trace(go.Bar(
+                x=hourly_data['hour'],
+                y=hourly_data['interaction_count'],
+                name='Interactions',
+                yaxis='y2',
+                opacity=0.3
+            ))
+            fig.update_layout(
+                title='Hourly Sentiment Analysis',
+                xaxis=dict(title='Hour of Day'),
+                yaxis=dict(title='Average Sentiment'),
+                yaxis2=dict(title='Number of Interactions', overlaying='y', side='right'),
+                hovermode='x unified'
+            )
+            st.plotly_chart(fig)
+
+        finally:
+            cursor.close()
+
+    # 6. Latest Sentiment Trends Table
+    st.subheader("Recent Sentiment Trends")
+    latest_data = sentiment_data.tail(10).sort_values('date', ascending=False)
+    styled_data = latest_data.style.background_gradient(
+        subset=['avg_sentiment', 'satisfaction_score'],
+        cmap='RdYlGn'
+    )
+    st.dataframe(styled_data)
 
     def display_search_analytics(self):
         st.subheader("Search Analytics")

@@ -98,7 +98,7 @@ class OpenAlexProcessor:
             conn = get_db_connection()
             cur = conn.cursor()
 
-            # Check column types (only knowledge_expertise is needed, remove domains, fields, subfields)
+            # Check column types
             cur.execute("""
                 SELECT column_name, data_type 
                 FROM information_schema.columns 
@@ -110,8 +110,9 @@ class OpenAlexProcessor:
             df = pd.read_csv(expertise_csv)
             for _, row in df.iterrows():
                 try:
-                    firstname = row['Firstname']
-                    lastname = row['Lastname']
+                    # Updated to match your CSV column names exactly
+                    first_name = row['First_name']  # Changed from 'first_name'
+                    last_name = row['Last_name']    # Changed from 'last_name'
                     designation = row['Designation']
                     theme = row['Theme']
                     unit = row['Unit']
@@ -123,26 +124,24 @@ class OpenAlexProcessor:
                     else:
                         expertise_list = [exp.strip() for exp in expertise_str.split(',') if exp.strip()]
 
-                    # Remove domains, fields, subfields from the insert if not updating them
                     cur.execute("""
                     INSERT INTO experts_expert (
-                        firstname, lastname, designation, theme, unit, contact_details, knowledge_expertise
+                        first_name, last_name, designation, theme, unit, contact_details, knowledge_expertise
                     ) VALUES (
                         %s, %s, %s, %s, %s, %s, %s
                     )
                     RETURNING id
-                """, (
-                    firstname, lastname, designation, theme, unit, contact_details,
-                    prepare_array_or_jsonb(expertise_list, column_types['knowledge_expertise'] == 'jsonb')
-                ))
-
+                    """, (
+                        first_name, last_name, designation, theme, unit, contact_details,
+                        prepare_array_or_jsonb(expertise_list, column_types['knowledge_expertise'] == 'jsonb')
+                    ))
 
                     conn.commit()
-                    logger.info(f"Added/updated expert data for {firstname} {lastname}")
+                    logger.info(f"Added/updated expert data for {first_name} {last_name}")
 
                 except Exception as e:
                     conn.rollback()
-                    logger.error(f"Error processing row for {row.get('Firstname', 'Unknown')} {row.get('Lastname', 'Unknown')}: {e}")
+                    logger.error(f"Error processing row for {row.get('First_name', 'Unknown')} {row.get('Last_name', 'Unknown')}: {e}")
                     continue
 
         except Exception as e:
@@ -154,27 +153,26 @@ class OpenAlexProcessor:
             if 'conn' in locals():
                 conn.close()
 
-
     async def _update_single_expert(self, session: aiohttp.ClientSession, 
-                                  expert_id: int, firstname: str, lastname: str):
+                                expert_id: int, first_name: str, last_name: str):
         """Update a single expert with OpenAlex data."""
         try:
             success = await self.expert_processor.update_expert_fields(
-                session, firstname, lastname
+                session, first_name, last_name
             )
             if success:
-                logger.info(f"Updated data for {firstname} {lastname}")
+                logger.info(f"Updated data for {first_name} {last_name}")
             else:
-                logger.warning(f"Could not update fields for {firstname} {lastname}")
+                logger.warning(f"Could not update fields for {first_name} {last_name}")
         except Exception as e:
-            logger.error(f"Error processing expert {firstname} {lastname}: {e}")
+            logger.error(f"Error processing expert {first_name} {last_name}: {e}")
 
     async def update_experts_with_openalex(self):
         """Update experts with OpenAlex data."""
         try:
             # Get all experts without ORCID
             experts = self.db.execute("""
-                SELECT id, firstname, lastname
+                SELECT id, first_name, last_name
                 FROM experts_expert
                 WHERE orcid IS NULL OR orcid = ''
             """)
@@ -192,9 +190,9 @@ class OpenAlexProcessor:
                     batch = experts[i:i + batch_size]
                     tasks = []
                     
-                    for expert_id, firstname, lastname in batch:
+                    for expert_id, first_name, last_name in batch:
                         task = asyncio.create_task(
-                            self._update_single_expert(session, expert_id, firstname, lastname)
+                            self._update_single_expert(session, expert_id, first_name, last_name)
                         )
                         tasks.append(task)
                     
@@ -213,29 +211,29 @@ class OpenAlexProcessor:
 
     
     async def update_expert_fields(self, session: aiohttp.ClientSession, 
-                               firstname: str, lastname: str) -> bool:
+                               first_name: str, last_name: str) -> bool:
         """
         Update expert fields with OpenAlex data.
         
         Args:
             session: Aiohttp session for HTTP requests.
-            firstname: First name of the expert.
-            lastname: Last name of the expert.
+            first_name: First name of the expert.
+            last_name: Last name of the expert.
         
         Returns:
             bool: True if the update was successful, False otherwise.
         """
         try:
             # Get OpenAlex IDs
-            orcid, openalex_id = self.get_expert_openalex_data(firstname, lastname)
+            orcid, openalex_id = self.get_expert_openalex_data(first_name, last_name)
             
             if not openalex_id:
-                logger.warning(f"No OpenAlex ID found for {firstname} {lastname}")
+                logger.warning(f"No OpenAlex ID found for {first_name} {last_name}")
                 return False
             
             # Get domains, fields, and subfields
             domains, fields, subfields = await self.get_expert_domains(
-                session, firstname, lastname, openalex_id
+                session, first_name, last_name, openalex_id
             )
             
             # Prepare and execute the update query
@@ -268,27 +266,27 @@ class OpenAlexProcessor:
                         )
                     )
                 WHERE 
-                    firstname = %s AND lastname = %s
+                    first_name = %s AND last_name = %s
                 RETURNING id
             """, (
                 orcid,           # Parameter 1
                 domains,         # Parameter 2
                 fields,          # Parameter 3
                 subfields,       # Parameter 4
-                firstname,       # Parameter 5
-                lastname         # Parameter 6
+                first_name,       # Parameter 5
+                last_name         # Parameter 6
             ))
             
-            logger.info(f"Updated OpenAlex data for {firstname} {lastname}")
+            logger.info(f"Updated OpenAlex data for {first_name} {last_name}")
             return True
         
         except Exception as e:
-            logger.error(f"Error updating expert fields for {firstname} {lastname}: {e}")
+            logger.error(f"Error updating expert fields for {first_name} {last_name}: {e}")
             return False
 
 
     async def get_expert_domains(self, session: aiohttp.ClientSession, 
-                               firstname: str, lastname: str, openalex_id: str) -> Tuple[List[str], List[str], List[str]]:
+                               first_name: str, last_name: str, openalex_id: str) -> Tuple[List[str], List[str], List[str]]:
         """Get expert domains from their works."""
         works = await self.get_expert_works(session, openalex_id)
         
@@ -296,7 +294,7 @@ class OpenAlexProcessor:
         fields = set()
         subfields = set()
 
-        logger.info(f"Processing {len(works)} works for {firstname} {lastname}")
+        logger.info(f"Processing {len(works)} works for {first_name} {last_name}")
 
         for work in works:
             try:
@@ -358,9 +356,9 @@ class OpenAlexProcessor:
         try:
             # Get all experts with ORCID, excluding those with "Unknown" first or last name
             experts = self.db.execute("""
-                SELECT id, firstname, lastname, orcid
+                SELECT id, first_name, last_name, orcid
                 FROM experts_expert
-                WHERE orcid IS NOT NULL AND orcid != '' AND firstname <> 'Unknown' AND lastname <> 'Unknown'
+                WHERE orcid IS NOT NULL AND orcid != '' AND first_name <> 'Unknown' AND last_name <> 'Unknown'
             """)
             
             if not experts:
@@ -373,13 +371,13 @@ class OpenAlexProcessor:
             logger.info(f"Processing publications for {len(experts)} experts")
 
             async with aiohttp.ClientSession() as session:
-                for expert_id, firstname, lastname, orcid in experts:
+                for expert_id, first_name, last_name, orcid in experts:
                     try:
                         if publication_count >= max_publications:
                             logger.info("Reached maximum publication limit")
                             break
 
-                        logger.info(f"Fetching publications for {firstname} {lastname}")
+                        logger.info(f"Fetching publications for {first_name} {last_name}")
                         publications = await self._fetch_expert_publications(session, orcid)
                         
                         for work in publications:
@@ -399,7 +397,7 @@ class OpenAlexProcessor:
                                 continue
                                 
                     except Exception as e:
-                        logger.error(f"Error processing publications for {firstname} {lastname}: {e}")
+                        logger.error(f"Error processing publications for {first_name} {last_name}: {e}")
                         continue
                         
             logger.info(f"Publications processing completed. Total processed: {publication_count}")
@@ -434,12 +432,12 @@ class OpenAlexProcessor:
             logger.error(f"Error fetching publications: {e}")
             return []
 
-    def get_expert_openalex_data(self, firstname: str, lastname: str) -> Tuple[str, str]:
+    def get_expert_openalex_data(self, first_name: str, last_name: str) -> Tuple[str, str]:
         """Get expert's ORCID and OpenAlex ID."""
         search_url = f"{self.base_url}/authors"
         params = {
-            "search": f"{firstname} {lastname}",
-            "filter": "display_name.search:" + f'"{firstname} {lastname}"'
+            "search": f"{first_name} {last_name}",
+            "filter": "display_name.search:" + f'"{first_name} {last_name}"'
         }
         
         try:
@@ -469,7 +467,7 @@ class OpenAlexProcessor:
                     continue
                 
         except Exception as e:
-            logger.error(f"Error fetching data for {firstname} {lastname}: {e}")
+            logger.error(f"Error fetching data for {first_name} {last_name}: {e}")
         return '', ''
 
     def close(self) -> None:
@@ -481,11 +479,11 @@ class OpenAlexProcessor:
         except Exception as e:
             logger.error(f"Error closing resources: {e}")
 
-    async def _validate_expert(self, expert_id: int, firstname: str, lastname: str) -> bool:
+    async def _validate_expert(self, expert_id: int, first_name: str, last_name: str) -> bool:
         """Validate expert data."""
         try:
-            if not all([expert_id, firstname, lastname]):
-                logger.warning(f"Invalid expert data: id={expert_id}, name={firstname} {lastname}")
+            if not all([expert_id, first_name, last_name]):
+                logger.warning(f"Invalid expert data: id={expert_id}, name={first_name} {last_name}")
                 return False
             return True
         except Exception as e:

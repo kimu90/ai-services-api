@@ -35,8 +35,8 @@ class ExpertService:
 
         if search:
             search_filter = or_(
-                Expert.firstname.ilike(f"%{search}%"),
-                Expert.lastname.ilike(f"%{search}%"),
+                Expert.first_name.ilike(f"%{search}%"),
+                Expert.last_name.ilike(f"%{search}%"),
                 Expert.email.ilike(f"%{search}%"),
                 Expert.designation.ilike(f"%{search}%"),
                 Expert.theme.ilike(f"%{search}%")

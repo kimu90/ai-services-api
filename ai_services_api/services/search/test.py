@@ -45,21 +45,21 @@ class OpenAlexProcessor:
         try:
             # Get all experts without ORCID
             experts = self.db.execute("""
-                SELECT id, firstname, lastname
+                SELECT id, first_name, last_name
                 FROM research
                 WHERE orcid IS NULL OR orcid = ''
             """)
             
             async with aiohttp.ClientSession() as session:
-                for expert_id, firstname, lastname in experts:
+                for expert_id, first_name, last_name in experts:
                     try:
                         success = await self.expert_processor.update_expert_fields(
-                            session, firstname, lastname
+                            session, first_name, last_name
                         )
                         if not success:
-                            logger.warning(f"Could not update fields for {firstname} {lastname} (ID: {expert_id})")
+                            logger.warning(f"Could not update fields for {first_name} {last_name} (ID: {expert_id})")
                     except Exception as e:
-                        logger.error(f"Error processing expert {firstname} {lastname} (ID: {expert_id}): {e}")
+                        logger.error(f"Error processing expert {first_name} {last_name} (ID: {expert_id}): {e}")
                         continue
         except Exception as e:
             logger.error(f"Error updating experts with OpenAlex data: {e}")
@@ -70,15 +70,15 @@ class OpenAlexProcessor:
         try:
             # Get all experts with ORCID
             experts = self.db.execute("""
-                SELECT id, firstname, lastname, orcid
+                SELECT id, first_name, last_name, orcid
                 FROM research
                 WHERE orcid IS NOT NULL AND orcid != ''
             """)
             
             async with aiohttp.ClientSession() as session:
-                for expert_id, firstname, lastname, orcid in experts:
+                for expert_id, first_name, last_name, orcid in experts:
                     try:
-                        logger.info(f"Fetching publications for {firstname} {lastname}")
+                        logger.info(f"Fetching publications for {first_name} {last_name}")
                         
                         # Fetch works from OpenAlex
                         url = f"{self.base_url}/works?filter=author.orcid:{orcid}"
@@ -95,10 +95,10 @@ class OpenAlexProcessor:
                                         logger.error(f"Error processing work: {e}")
                                         continue
                             else:
-                                logger.warning(f"Failed to fetch publications for {firstname} {lastname}")
+                                logger.warning(f"Failed to fetch publications for {first_name} {last_name}")
                                 
                     except Exception as e:
-                        logger.error(f"Error processing publications for {firstname} {lastname}: {e}")
+                        logger.error(f"Error processing publications for {first_name} {last_name}: {e}")
                         continue
                         
             logger.info("Publications processing completed")

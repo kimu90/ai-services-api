@@ -9,6 +9,7 @@ import time
 from ai_services_api.services.chatbot.utils.llm_manager import GeminiLLMManager
 from ai_services_api.services.chatbot.utils.message_handler import MessageHandler
 from ai_services_api.services.chatbot.utils.db_utils import DatabaseConnector
+from uuid import uuid4
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -22,14 +23,7 @@ llm_manager = GeminiLLMManager()
 message_handler = MessageHandler(llm_manager)
 db_connector = DatabaseConnector()
 
-# Request/Response Models
-class ChatRequest(BaseModel):
-    query: str
-    user_id: str
-    session_id: Optional[str] = None
-    conversation_id: Optional[str] = None
-    context: Optional[Dict] = None
-
+# Response Models
 class ChatResponse(BaseModel):
     response: str
     timestamp: datetime
@@ -51,11 +45,11 @@ class ChatMetrics(BaseModel):
     success_rate: float
     expert_matches: list[ExpertMatchMetrics]
 
-@router.post("/chat")
+@router.get("/chat/{query}")
 @limiter.limit("5/minute")
 async def chat_endpoint(
+    query: str,
     request: Request,
-    chat_request: ChatRequest,
     background_tasks: BackgroundTasks
 ):
     """Main chat endpoint with full analytics tracking."""
@@ -64,21 +58,20 @@ async def chat_endpoint(
     start_time = datetime.utcnow()
     
     try:
-        # Get or create session
-        session_id = chat_request.session_id
-        if not session_id:
-            session_id = await message_handler.start_chat_session(chat_request.user_id)
+        # Generate a random user_id
+        user_id = str(uuid4())
+        
+        # Create a new session
+        session_id = await message_handler.start_chat_session(user_id)
         
         # Process message and collect response
         response_parts = []
         response_metadata = None
         
         async for part in message_handler.send_message_async(
-            message=chat_request.query,
-            user_id=chat_request.user_id,
-            session_id=session_id,
-            conversation_id=chat_request.conversation_id,
-            context=chat_request.context
+            message=query,
+            user_id=user_id,
+            session_id=session_id
         ):
             if isinstance(part, dict):
                 response_metadata = part
@@ -93,8 +86,8 @@ async def chat_endpoint(
         if response_metadata:
             interaction_id = await message_handler.record_interaction(
                 session_id=session_id,
-                user_id=chat_request.user_id,
-                query=chat_request.query,
+                user_id=user_id,
+                query=query,
                 response_data={
                     'response': complete_response,
                     **response_metadata
@@ -122,7 +115,7 @@ async def chat_endpoint(
         return ChatResponse(
             response=complete_response,
             timestamp=datetime.utcnow(),
-            user_id=chat_request.user_id,
+            user_id=user_id,
             session_id=session_id,
             metrics=metrics
         )
@@ -133,8 +126,8 @@ async def chat_endpoint(
         if session_id:
             await message_handler.record_interaction(
                 session_id=session_id,
-                user_id=chat_request.user_id,
-                query=chat_request.query,
+                user_id=user_id,
+                query=query,
                 response_data={
                     'response': str(e),
                     'intent_type': None,
@@ -181,7 +174,7 @@ async def get_chat_metrics(session_id: str):
         cursor.execute("""
             SELECT 
                 a.expert_id,
-                e.firstname || ' ' || e.lastname as name,
+                e.first_name || ' ' || e.last_name as name,
                 a.similarity_score,
                 a.rank_position,
                 a.clicked
@@ -214,226 +207,6 @@ async def get_chat_metrics(session_id: str):
     finally:
         cursor.close()
         db_conn.close()
-
-@router.post("/test/chat")
-async def test_chat_endpoint(
-    request: Request,
-    chat_request: ChatRequest,
-    background_tasks: BackgroundTasks
-):
-    """Test endpoint for chat interactions with guaranteed data collection."""
-    db_conn = db_connector.get_connection()
-    cursor = db_conn.cursor()
-    start_time = datetime.utcnow()
-    
-    try:
-        # Force test user ID
-        test_user_id = "test_user"
-        
-        # Create test session
-        cursor.execute("""
-            INSERT INTO chat_sessions (session_id, user_id, start_time)
-            VALUES (%s, %s, CURRENT_TIMESTAMP)
-            RETURNING session_id
-        """, (f"test_session_{int(time.time())}", test_user_id))
-        
-        session_id = cursor.fetchone()[0]
-        db_conn.commit()
-        
-        logger.info(f"Created test session: {session_id}")
-        
-        # Process chat request
-        response_parts = []
-        metadata = None
-        
-        async for part in message_handler.send_message_async(
-            message=chat_request.query,
-            user_id=test_user_id,
-            session_id=session_id
-        ):
-            if isinstance(part, dict) and part.get('is_metadata'):
-                metadata = part['metadata']
-            else:
-                if isinstance(part, bytes):
-                    part = part.decode('utf-8')
-                response_parts.append(part)
-        
-        complete_response = ''.join(response_parts)
-        
-        # Record interaction
-        cursor.execute("""
-            INSERT INTO chat_interactions (
-                session_id, user_id, query, response, timestamp,
-                response_time, intent_type, intent_confidence,
-                expert_matches, error_occurred
-            ) VALUES (%s, %s, %s, %s, CURRENT_TIMESTAMP, %s, %s, %s, %s, %s)
-            RETURNING id
-        """, (
-            session_id,
-            test_user_id,
-            chat_request.query,
-            complete_response,
-            metadata.get('response_time', 0) if metadata else 0,
-            metadata.get('intent_type', 'general') if metadata else 'general',
-            metadata.get('intent_confidence', 0) if metadata else 0,
-            len(metadata.get('expert_matches', [])) if metadata else 0,
-            metadata.get('error_occurred', False) if metadata else False
-        ))
-        
-        interaction_id = cursor.fetchone()[0]
-        
-        # Record expert matches if any
-        if metadata and metadata.get('expert_matches'):
-            for match in metadata['expert_matches']:
-                cursor.execute("""
-                    INSERT INTO chat_analytics (
-                        interaction_id, expert_id, similarity_score,
-                        rank_position, clicked
-                    ) VALUES (%s, %s, %s, %s, false)
-                """, (
-                    interaction_id,
-                    match['expert_id'],
-                    match['similarity_score'],
-                    match['rank_position']
-                ))
-        
-        db_conn.commit()
-        
-        return ChatResponse(
-            response=complete_response,
-            timestamp=datetime.utcnow(),
-            user_id=test_user_id,
-            session_id=session_id,
-            metrics={
-                'response_time': metadata.get('response_time', 0) if metadata else 0,
-                'intent': {
-                    'type': metadata.get('intent_type', 'general') if metadata else 'general',
-                    'confidence': metadata.get('intent_confidence', 0) if metadata else 0
-                },
-                'expert_matches': len(metadata.get('expert_matches', [])) if metadata else 0
-            }
-        )
-        
-    except Exception as e:
-        logger.error(f"Error in test chat endpoint: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-    finally:
-        cursor.close()
-        db_conn.close()
-
-@router.get("/test/verify-data/{session_id}")
-async def verify_test_data(session_id: str):
-    """Verify that test data was properly stored."""
-    db_conn = db_connector.get_connection()
-    cursor = db_conn.cursor()
-    
-    try:
-        # Check session data
-        cursor.execute("""
-            SELECT 
-                s.session_id,
-                s.user_id,
-                COUNT(i.id) as interaction_count,
-                COUNT(a.id) as analytics_count
-            FROM chat_sessions s
-            LEFT JOIN chat_interactions i ON s.session_id = i.session_id
-            LEFT JOIN chat_analytics a ON a.interaction_id = i.id
-            WHERE s.session_id = %s
-            GROUP BY s.session_id, s.user_id
-        """, (session_id,))
-        
-        result = cursor.fetchone()
-        if not result:
-            raise HTTPException(status_code=404, detail="Test session not found")
-            
-        return {
-            "session_id": result[0],
-            "user_id": result[1],
-            "stored_interactions": result[2],
-            "stored_analytics": result[3],
-            "verification": "Data successfully stored"
-        }
-        
-    finally:
-        cursor.close()
-        db_conn.close()
-
-@router.get("/test/metrics")
-async def test_get_metrics(hours: int = 24):
-    """Get metrics for test interactions."""
-    db_conn = db_connector.get_connection()
-    cursor = db_conn.cursor()
-    
-    try:
-        cursor.execute("""
-            WITH TestMetrics AS (
-                SELECT 
-                    COUNT(*) as total_interactions,
-                    COUNT(DISTINCT session_id) as unique_sessions,
-                    AVG(response_time) as avg_response_time,
-                    SUM(CASE WHEN error_occurred THEN 1 ELSE 0 END)::FLOAT / COUNT(*) as error_rate
-                FROM chat_interactions
-                WHERE user_id = 'test_user'
-                AND timestamp >= NOW() - interval '%s hours'
-            ),
-            ExpertMetrics AS (
-                SELECT 
-                    COUNT(*) as total_matches,
-                    AVG(similarity_score) as avg_similarity,
-                    SUM(CASE WHEN clicked THEN 1 ELSE 0 END)::FLOAT / COUNT(*) as click_rate
-                FROM chat_analytics a
-                JOIN chat_interactions i ON a.interaction_id = i.id
-                WHERE i.user_id = 'test_user'
-                AND i.timestamp >= NOW() - interval '%s hours'
-            )
-            SELECT * FROM TestMetrics, ExpertMetrics
-        """, (hours, hours))
-        
-        result = cursor.fetchone()
-        
-        return {
-            "time_period": f"Last {hours} hours",
-            "interactions": {
-                "total": result[0],
-                "unique_sessions": result[1],
-                "avg_response_time": result[2],
-                "error_rate": result[3]
-            },
-            "expert_matching": {
-                "total_matches": result[4],
-                "avg_similarity": result[5],
-                "click_rate": result[6]
-            }
-        }
-        
-    finally:
-        cursor.close()
-        db_conn.close()
-
-# Add this function to test the entire flow
-async def test_chat_flow():
-    """Test the entire chat flow and data collection."""
-    # Test chat request
-    response = await test_chat_endpoint(
-        request=Request,
-        chat_request=ChatRequest(
-            query="Who are the experts in public health?",
-            user_id="test_user"
-        ),
-        background_tasks=BackgroundTasks()
-    )
-    
-    # Verify data storage
-    verification = await verify_test_data(response.session_id)
-    
-    # Get metrics
-    metrics = await test_get_metrics(hours=1)
-    
-    return {
-        "chat_response": response,
-        "verification": verification,
-        "metrics": metrics
-    }
 
 @router.post("/chat/expert-click")
 async def record_expert_click(

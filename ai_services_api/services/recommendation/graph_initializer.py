@@ -169,8 +169,8 @@ class GraphDatabaseInitializer:
             cur.execute("""
                 SELECT 
                     id,
-                    firstname, 
-                    lastname,
+                    first_name, 
+                    last_name,
                     knowledge_expertise,
                     domains, 
                     fields, 
@@ -269,7 +269,7 @@ class GraphDatabaseInitializer:
                 for expert_data in experts_data:
                     try:
                         # Unpack data
-                        (expert_id, firstname, lastname, knowledge_expertise, 
+                        (expert_id, first_name, last_name, knowledge_expertise, 
                          domains, fields, subfields) = expert_data
 
                         if not expert_id:
@@ -279,7 +279,7 @@ class GraphDatabaseInitializer:
                         expertise_categories = self._normalize_expertise(knowledge_expertise)
 
                         # Create expert node with categorized expertise
-                        expert_name = f"{firstname} {lastname}"
+                        expert_name = f"{first_name} {last_name}"
                         self.create_expert_node(
                             session, 
                             expert_id, 

@@ -54,7 +54,7 @@ class GeminiClient:
         """
         prompt = f"""
         Analyze the following expert's profile and provide insights:
-        Name: {expert_data.get('firstname')} {expert_data.get('lastname')}
+        Name: {expert_data.get('first_name')} {expert_data.get('last_name')}
         Theme: {expert_data.get('theme')}
         Domains: {', '.join(expert_data.get('domains', []))}
         Fields: {', '.join(expert_data.get('fields', []))}

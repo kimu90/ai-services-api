@@ -8,8 +8,8 @@ class Expert(Base):
     __tablename__ = "experts_expert"  # Matches your existing table name
 
     id = Column(Integer, primary_key=True, index=True)
-    firstname = Column(String(255), nullable=False)
-    lastname = Column(String(255), nullable=False)
+    first_name = Column(String(255), nullable=False)
+    last_name = Column(String(255), nullable=False)
     designation = Column(String(255))
     theme = Column(String(255))
     unit = Column(String(255))

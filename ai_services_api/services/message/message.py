@@ -56,7 +56,7 @@ async def create_message_draft(
         # Get sender details with error handling
         try:
             cur.execute("""
-                SELECT id, firstname, lastname, designation, theme, domains, fields 
+                SELECT id, first_name, last_name, designation, theme, domains, fields 
                 FROM experts_expert 
                 WHERE id = %s AND is_active = true
             """, (sender_id,))
@@ -78,7 +78,7 @@ async def create_message_draft(
         # Get receiver details with error handling
         try:
             cur.execute("""
-                SELECT id, firstname, lastname, designation, theme, domains, fields 
+                SELECT id, first_name, last_name, designation, theme, domains, fields 
                 FROM experts_expert 
                 WHERE id = %s AND is_active = true
             """, (receiver_id,))
@@ -112,8 +112,8 @@ async def create_message_draft(
         # Generate draft using AI
         try:
             prompt = f"""
-            Draft a professional message from {sender['firstname']} {sender['lastname']} ({sender['designation'] or 'Expert'}) 
-            to {receiver['firstname']} {receiver['lastname']} ({receiver['designation'] or 'Expert'}).
+            Draft a professional message from {sender['first_name']} {sender['last_name']} ({sender['designation'] or 'Expert'}) 
+            to {receiver['first_name']} {receiver['last_name']} ({receiver['designation'] or 'Expert'}).
             
             Context about sender:
             - Theme: {sender['theme'] or 'Not specified'}
@@ -168,8 +168,8 @@ async def create_message_draft(
                 "receiver_id": receiver_id,
                 "created_at": new_message['created_at'],
                 "draft": True,
-                "sender_name": f"{sender['firstname']} {sender['lastname']}",
-                "receiver_name": f"{receiver['firstname']} {receiver['lastname']}"
+                "sender_name": f"{sender['first_name']} {sender['last_name']}",
+                "receiver_name": f"{receiver['first_name']} {receiver['last_name']}"
             }
 
         except Exception as e:
@@ -267,10 +267,10 @@ async def get_message_thread(
     try:
         cur.execute("""
             SELECT m.*, 
-                   s.firstname as sender_firstname, 
-                   s.lastname as sender_lastname,
-                   r.firstname as receiver_firstname, 
-                   r.lastname as receiver_lastname
+                   s.first_name as sender_first_name, 
+                   s.last_name as sender_last_name,
+                   r.first_name as receiver_first_name, 
+                   r.last_name as receiver_last_name
             FROM expert_messages m
             JOIN experts_expert s ON m.sender_id = s.id
             JOIN experts_expert r ON m.receiver_id = r.id
@@ -287,8 +287,8 @@ async def get_message_thread(
             "content": msg['content'],
             "sender_id": msg['sender_id'],
             "receiver_id": msg['receiver_id'],
-            "sender_name": f"{msg['sender_firstname']} {msg['sender_lastname']}",
-            "receiver_name": f"{msg['receiver_firstname']} {msg['receiver_lastname']}",
+            "sender_name": f"{msg['sender_first_name']} {msg['sender_last_name']}",
+            "receiver_name": f"{msg['receiver_first_name']} {msg['receiver_last_name']}",
             "created_at": msg['created_at'],
             "draft": msg['draft']
         } for msg in messages]

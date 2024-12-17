@@ -181,8 +181,8 @@ def create_tables():
             """
             CREATE TABLE IF NOT EXISTS experts_expert (
                 id SERIAL PRIMARY KEY,
-                firstname VARCHAR(255) NOT NULL,
-                lastname VARCHAR(255) NOT NULL,
+                first_name VARCHAR(255) NOT NULL,
+                last_name VARCHAR(255) NOT NULL,
                 designation VARCHAR(255),
                 theme VARCHAR(255),
                 unit VARCHAR(255),
@@ -482,6 +482,28 @@ def create_tables():
             )
             """,
             """
+            CREATE TABLE IF NOT EXISTS sentiment_metrics (
+                id SERIAL PRIMARY KEY,
+                interaction_id INTEGER REFERENCES chat_interactions(id),
+                sentiment_score FLOAT,
+                emotion_labels TEXT[],
+                satisfaction_score FLOAT,
+                urgency_score FLOAT,
+                clarity_score FLOAT,
+                timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS sentiment_trends (
+                id SERIAL PRIMARY KEY,
+                session_id TEXT REFERENCES chat_sessions(session_id),
+                avg_sentiment FLOAT,
+                avg_satisfaction FLOAT,
+                period_start TIMESTAMP,
+                period_end TIMESTAMP
+            )
+            """,
+            """
             CREATE TABLE IF NOT EXISTS expert_summary_logs (
                 id SERIAL PRIMARY KEY,
                 expert_id VARCHAR(255),
@@ -564,7 +586,7 @@ def create_tables():
 
         # Define all index creation statements
         index_statements = [
-            "CREATE INDEX IF NOT EXISTS idx_experts_name ON experts_expert (firstname, lastname)",
+            "CREATE INDEX IF NOT EXISTS idx_experts_name ON experts_expert (first_name, last_name)",
             "CREATE INDEX IF NOT EXISTS idx_query_history_timestamp ON query_history_ai (timestamp DESC)",
             "CREATE INDEX IF NOT EXISTS idx_query_history_user ON query_history_ai (user_id)",
             "CREATE INDEX IF NOT EXISTS idx_chat_updated ON chat_chatbox (updated_at DESC)",
@@ -590,7 +612,14 @@ def create_tables():
             "CREATE INDEX IF NOT EXISTS idx_domain_expertise_name_match ON domain_expertise_analytics(domain_name, match_count)",
             "CREATE INDEX IF NOT EXISTS idx_messages_sender ON expert_messages(sender_id)",
             "CREATE INDEX IF NOT EXISTS idx_messages_receiver ON expert_messages(receiver_id)",
-            "CREATE INDEX IF NOT EXISTS idx_messages_created_at ON expert_messages(created_at DESC)"
+            "CREATE INDEX IF NOT EXISTS idx_messages_created_at ON expert_messages(created_at DESC)",
+            "CREATE INDEX IF NOT EXISTS idx_sentiment_metrics_interaction ON sentiment_metrics(interaction_id)",
+            "CREATE INDEX IF NOT EXISTS idx_sentiment_metrics_timestamp ON sentiment_metrics(timestamp)",
+            "CREATE INDEX IF NOT EXISTS idx_sentiment_metrics_scores ON sentiment_metrics(sentiment_score, satisfaction_score)",
+            "CREATE INDEX IF NOT EXISTS idx_sentiment_metrics_emotion ON sentiment_metrics USING gin(emotion_labels)",
+            "CREATE INDEX IF NOT EXISTS idx_sentiment_trends_session ON sentiment_trends(session_id)",
+            "CREATE INDEX IF NOT EXISTS idx_sentiment_trends_period ON sentiment_trends(period_start, period_end)",
+            "CREATE INDEX IF NOT EXISTS idx_sentiment_trends_sentiment ON sentiment_trends(avg_sentiment)"
 
 
         ]
@@ -616,6 +645,20 @@ def create_tables():
                 SUM(CASE WHEN clicked THEN 1 ELSE 0 END)::FLOAT / COUNT(*) as click_through_rate
             FROM search_logs
             GROUP BY DATE(timestamp)
+            """,
+            """
+            CREATE OR REPLACE VIEW sentiment_analysis_metrics AS
+            SELECT 
+                DATE_TRUNC('hour', sm.timestamp) as time_period,
+                AVG(sm.sentiment_score) as avg_sentiment,
+                AVG(sm.satisfaction_score) as avg_satisfaction,
+                AVG(sm.urgency_score) as avg_urgency,
+                AVG(sm.clarity_score) as avg_clarity,
+                COUNT(*) as total_interactions,
+                array_agg(DISTINCT e) as emotions
+            FROM sentiment_metrics sm
+            CROSS JOIN LATERAL unnest(sm.emotion_labels) as e
+            GROUP BY DATE_TRUNC('hour', sm.timestamp);
             """,
             """
             CREATE OR REPLACE VIEW expert_search_metrics AS
@@ -749,29 +792,37 @@ def load_initial_experts(expertise_csv: str):
     try:
         df = pd.read_csv(expertise_csv)
         for _, row in df.iterrows():
-            firstname = row['Firstname']
-            lastname = row['Lastname']
-            designation = row['Designation']
-            theme = row['Theme']
-            unit = row['Unit']
-            contact_details = row['Contact Details']
-            expertise_str = row['Knowledge and Expertise']
-            expertise_list = [exp.strip() for exp in expertise_str.split(',') if exp.strip()]
-            fake_password = generate_fake_password()
+            try:
+                # Try different possible column names
+                first_name = row.get('First_name', row.get('first_name', row.get('Firstname', row.get('firstname', 'Unknown'))))
+                last_name = row.get('Last_name', row.get('last_name', row.get('Lastname', row.get('lastname', 'Unknown'))))
+                designation = row.get('Designation', row.get('designation', ''))
+                theme = row.get('Theme', row.get('theme', ''))
+                unit = row.get('Unit', row.get('unit', ''))
+                contact_details = row.get('Contact Details', row.get('contact_details', row.get('ContactDetails', '')))
+                expertise_str = row.get('Knowledge and Expertise', row.get('knowledge_expertise', row.get('Expertise', '')))
+                
+                # Handle empty expertise string
+                expertise_list = [exp.strip() for exp in expertise_str.split(',') if exp.strip()] if expertise_str else []
+                fake_password = generate_fake_password()
 
-            cur.execute("""
-                INSERT INTO experts_expert (
-                    firstname, lastname, designation, theme, unit, contact_details, knowledge_expertise
-                ) VALUES (
-                    %s, %s, %s, %s, %s, %s, %s
-                )
-                RETURNING id
-            """, (
-                firstname, lastname, designation, theme, unit, contact_details,
-                json.dumps(expertise_list) if expertise_list else None
-            ))
-            conn.commit()
-            logger.info(f"Added/updated expert data for {firstname} {lastname}")
+                cur.execute("""
+                    INSERT INTO experts_expert (
+                        first_name, last_name, designation, theme, unit, contact_details, knowledge_expertise
+                    ) VALUES (
+                        %s, %s, %s, %s, %s, %s, %s
+                    )
+                    RETURNING id
+                """, (
+                    first_name, last_name, designation, theme, unit, contact_details,
+                    json.dumps(expertise_list) if expertise_list else None
+                ))
+                conn.commit()
+                logger.info(f"Added/updated expert data for {first_name} {last_name}")
+            except Exception as row_error:
+                logger.warning(f"Skipping row due to error: {row_error}")
+                continue
+                
     except Exception as e:
         conn.rollback()
         logger.error(f"Error loading initial expert data: {e}")
@@ -784,3 +835,4 @@ if __name__ == "__main__":
     create_database_if_not_exists()
     create_tables()
     fix_experts_table()
+ 

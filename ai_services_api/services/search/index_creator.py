@@ -54,8 +54,8 @@ class ExpertSearchIndexManager:
         """Create searchable text from expert data."""
         specialties = expert['specialties']
         text_parts = [
-            f"Name: {expert['name']}",
-            f"Designation: {expert['designation']}",
+            f"First Name: {expert['first_name']}",
+            f"Last Name: {expert['last_name']}",
             f"Theme: {expert['theme']}",
             f"Unit: {expert['unit']}",
             f"Contact: {expert['contact']}",
@@ -95,8 +95,8 @@ class ExpertSearchIndexManager:
                     cur.execute("""
                         SELECT 
                             id,
-                            firstname,
-                            lastname,
+                            first_name,
+                            last_name,
                             designation,
                             theme,
                             unit,
@@ -119,7 +119,8 @@ class ExpertSearchIndexManager:
                         try:
                             expert = {
                                 'id': row[0],
-                                'name': f"{row[1]} {row[2]}",
+                                'first_name': row[1],  # Keep first_name separate
+                                'last_name': row[2],  
                                 'designation': row[3] or '',
                                 'theme': row[4] or '',
                                 'unit': row[5] or '',
@@ -168,7 +169,8 @@ class ExpertSearchIndexManager:
                     'vector': embedding.tobytes(),
                     'metadata': json.dumps({
                         'id': metadata['id'],
-                        'name': metadata['name'],
+                        'first_name': metadata['first_name'],
+                        'last_name': metadata['last_name'],
                         'designation': metadata['designation'],
                         'theme': metadata['theme'],
                         'unit': metadata['unit'],
@@ -211,7 +213,8 @@ class ExpertSearchIndexManager:
                     embedding,
                     {
                         'id': expert['id'],
-                        'name': expert['name'],
+                        'first_name': expert['first_name'],
+                        'last_name': expert['last_name'],
                         'designation': expert['designation'],
                         'theme': expert['theme'],
                         'unit': expert['unit'],

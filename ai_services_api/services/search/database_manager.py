@@ -30,7 +30,7 @@ class DatabaseManager:
             logger.error(f"Query execution failed: {str(e)}\nQuery: {query}\nParams: {params}")
             raise
 
-    def add_expert(self, firstname: str, lastname: str, 
+    def add_expert(self, first_name: str, last_name: str, 
                   knowledge_expertise: List[str] = None,
                   domains: List[str] = None,
                   fields: List[str] = None,
@@ -43,19 +43,19 @@ class DatabaseManager:
             
             self.cur.execute("""
                 INSERT INTO experts_expert 
-                (firstname, lastname, knowledge_expertise, domains, fields, subfields, orcid)
+                (first_name, last_name, knowledge_expertise, domains, fields, subfields, orcid)
                 VALUES (%s, %s, %s, %s, %s, %s, %s)
                 ON CONFLICT (orcid) 
                 WHERE orcid IS NOT NULL AND orcid != ''
                 DO UPDATE SET
-                    firstname = EXCLUDED.firstname,
-                    lastname = EXCLUDED.lastname,
+                    first_name = EXCLUDED.first_name,
+                    last_name = EXCLUDED.last_name,
                     knowledge_expertise = EXCLUDED.knowledge_expertise,
                     domains = EXCLUDED.domains,
                     fields = EXCLUDED.fields,
                     subfields = EXCLUDED.subfields
                 RETURNING id
-            """, (firstname, lastname, 
+            """, (first_name, last_name, 
                   knowledge_expertise or [], 
                   domains or [], 
                   fields or [], 
@@ -64,12 +64,12 @@ class DatabaseManager:
             
             expert_id = self.cur.fetchone()[0]
             self.conn.commit()
-            logger.info(f"Added/updated expert data for {firstname} {lastname}")
+            logger.info(f"Added/updated expert data for {first_name} {last_name}")
             return expert_id
             
         except Exception as e:
             self.conn.rollback()
-            logger.error(f"Error adding expert {firstname} {lastname}: {e}")
+            logger.error(f"Error adding expert {first_name} {last_name}: {e}")
             raise
 
     def add_publication(self, doi: str, title: str, abstract: str, summary: str) -> None:
@@ -171,19 +171,19 @@ class DatabaseManager:
             logger.error(f"Error updating expert {expert_id}: {e}")
             raise
 
-    def get_expert_by_name(self, firstname: str, lastname: str) -> Optional[Tuple]:
-        """Get expert by firstname and lastname."""
+    def get_expert_by_name(self, first_name: str, last_name: str) -> Optional[Tuple]:
+        """Get expert by first_name and last_name."""
         try:
             result = self.execute("""
-                SELECT id, firstname, lastname, knowledge_expertise, domains, fields, subfields, orcid
+                SELECT id, first_name, last_name, knowledge_expertise, domains, fields, subfields, orcid
                 FROM experts_expert
-                WHERE firstname = %s AND lastname = %s
-            """, (firstname, lastname))
+                WHERE first_name = %s AND last_name = %s
+            """, (first_name, last_name))
             
             return result[0] if result else None
             
         except Exception as e:
-            logger.error(f"Error retrieving expert {firstname} {lastname}: {e}")
+            logger.error(f"Error retrieving expert {first_name} {last_name}: {e}")
             raise
 
     def get_recent_queries(self, limit: int = 1000) -> List[Dict[str, Any]]:

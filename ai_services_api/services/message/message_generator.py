@@ -23,8 +23,8 @@ class MessageGenerator:
         }
         
         prompt = f"""
-        Draft a {style_guide.get(style, "professional")} message from {sender.firstname} {sender.lastname} ({sender.designation}) 
-        to {receiver.firstname} {receiver.lastname} ({receiver.designation}).
+        Draft a {style_guide.get(style, "professional")} message from {sender.first_name} {sender.last_name} ({sender.designation}) 
+        to {receiver.first_name} {receiver.last_name} ({receiver.designation}).
         
         Context about sender:
         - Theme: {sender.theme}

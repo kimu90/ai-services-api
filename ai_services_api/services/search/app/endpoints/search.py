@@ -15,7 +15,8 @@ ml_predictor = MLPredictor()
 
 class ExpertSearchResult(BaseModel):
     id: str
-    name: str
+    first_name: str
+    last_name: str
     designation: str
     theme: str
     unit: str
@@ -23,7 +24,7 @@ class ExpertSearchResult(BaseModel):
     is_active: bool
     score: float = None
     bio: str = None  
-    knowledge_expertise: List[str] = []  
+    knowledge_expertise: List[str] = []
 
 class SearchResponse(BaseModel):
     total_results: int
@@ -35,7 +36,6 @@ class PredictionResponse(BaseModel):
 
 @router.get("/experts/search/{query}")
 async def search_experts(query: str, active_only: bool = True):
-    """Search for experts based on query text."""
     try:
         search_manager = ExpertSearchIndexManager()
         results = search_manager.search_experts(query, k=5, active_only=active_only)
@@ -43,7 +43,8 @@ async def search_experts(query: str, active_only: bool = True):
         formatted_results = [
             ExpertSearchResult(
                 id=str(result['id']),
-                name=result['name'],
+                first_name=result['first_name'],
+                last_name=result['last_name'],
                 designation=result['designation'],
                 theme=result['theme'],
                 unit=result['unit'],
@@ -119,7 +120,8 @@ async def find_similar_experts(expert_id: str, active_only: bool = True):
         formatted_results = [
             ExpertSearchResult(
                 id=str(result['id']),
-                name=result['name'],
+                first_name=result['first_name'],
+                last_name=result['last_name'],
                 designation=result['designation'],
                 theme=result['theme'],
                 unit=result['unit'],
@@ -147,7 +149,6 @@ async def find_similar_experts(expert_id: str, active_only: bool = True):
 
 @router.get("/experts/{expert_id}")
 async def get_expert_details(expert_id: str):
-    """Get detailed information for an expert."""
     try:
         search_manager = ExpertSearchIndexManager()
         expert_data = await search_manager.get_expert_metadata(expert_id)
@@ -160,7 +161,8 @@ async def get_expert_details(expert_id: str):
         
         return ExpertSearchResult(
             id=str(expert_data['id']),
-            name=expert_data['name'],
+            first_name=expert_data['first_name'],
+            last_name=expert_data['last_name'],
             designation=expert_data['designation'],
             theme=expert_data['theme'],
             unit=expert_data['unit'],
@@ -215,7 +217,8 @@ async def test_search_experts(
         formatted_results = [
             ExpertSearchResult(
                 id=str(result['id']),
-                name=result['name'],
+                first_name=result['first_name'],
+                last_name=result['last_name'],
                 designation=result['designation'],
                 theme=result['theme'],
                 unit=result['unit'],
@@ -225,7 +228,6 @@ async def test_search_experts(
             )
             for result in results
         ]
-        
         # Update ML predictor
         ml_predictor.update(query, user_id="test_user")
         
@@ -243,16 +245,16 @@ async def test_search_experts(
 @router.get("/test/experts/predict/{partial_query}")
 async def test_predict_query(
     partial_query: str,
-    user_id: str = "test_user",
     test_error: bool = False
 ):
     """Test endpoint for query predictions with analytics"""
     try:
         if test_error:
             raise Exception("Test error scenario")
-            
+        
         logger.debug(f"Attempting prediction for partial query: {partial_query}")
-        predictions = ml_predictor.predict(partial_query, user_id)
+        ml_predictor = MLPredictor()
+        predictions = ml_predictor.predict(partial_query)
         logger.debug(f"Predictions returned: {predictions}")
         
         scores = [1.0 - (i * 0.1) for i in range(len(predictions))]
@@ -261,7 +263,7 @@ async def test_predict_query(
             predictions=predictions,
             confidence_scores=scores
         )
-        
+    
     except Exception as e:
         logger.error(f"Test Error predicting queries: {e}")
         raise HTTPException(status_code=500, detail=str(e))
