@@ -15,6 +15,7 @@ from ai_services_api.services.data.openalex.ai_summarizer import TextSummarizer
 from ai_services_api.services.recommendation.graph_initializer import GraphDatabaseInitializer
 from ai_services_api.services.search.index_creator import ExpertSearchIndexManager
 from ai_services_api.services.search.redis_index_manager import ExpertRedisIndexManager
+from ai_services_api.services.data.openalex.orcid_processor import OrcidProcessor
 
 logging.basicConfig(
     level=logging.INFO,
@@ -74,6 +75,7 @@ def initialize_graph():
 async def process_data(args):
     """Process experts and publications data."""
     processor = OpenAlexProcessor()
+    orcid_processor = OrcidProcessor()  # Initialize ORCID processor
     
     try:
         # Process expert data
@@ -90,15 +92,21 @@ async def process_data(args):
                 logger.info("Processing publications data...")
                 summarizer = TextSummarizer()
                 pub_processor = PublicationProcessor(processor.db, summarizer)
-                await processor.process_publications(pub_processor)
-                logger.info("Publications processing complete!")
+                
+                # Process OpenAlex publications
+                await processor.process_publications(pub_processor, source='openalex')
+                logger.info("OpenAlex Publications processing complete!")
+
+                # Process ORCID publications
+                await orcid_processor.process_publications(pub_processor, source='orcid')
+                logger.info("ORCID Publications processing complete!")
         
     except Exception as e:
         logger.error(f"Data processing failed: {e}")
         raise
     finally:
         processor.close()
-
+        orcid_processor.close()
 def create_search_index():
     """Create FAISS search index."""
     index_creator = ExpertSearchIndexManager()

@@ -84,8 +84,15 @@ class DatabaseManager:
             logger.error(f"Error adding expert {first_name} {last_name}: {e}")
             raise
 
-    def add_publication(self, doi: str, title: str, abstract: str, summary: str) -> None:
-        """Add or update a publication in the database."""
+    def add_publication(
+        self, 
+        doi: str, 
+        title: str, 
+        abstract: str, 
+        summary: str, 
+        source: str = 'openalex'  # Add source parameter with explicit default
+    ) -> None:
+        """Add or update a publication in the database with source tracking."""
         try:
             # Check if the publication already exists
             existing_publication = self.execute("""
@@ -93,26 +100,26 @@ class DatabaseManager:
             """, (doi,))
 
             if existing_publication:  # If publication exists
-                # Update the existing publication
+                # Update the existing publication with source
                 self.execute("""
                     UPDATE resources_resource
                     SET title = %s,
                         abstract = %s,
-                        summary = %s
+                        summary = %s,
+                        source = %s
                     WHERE doi = %s
-                """, (title, abstract, summary, doi))
-                logger.info(f"Updated publication: {title}")
+                """, (title, abstract, summary, source, doi))
+                logger.info(f"Updated publication: {title} (Source: {source})")
             else:
-                # Insert a new publication
+                # Insert a new publication with source
                 self.execute("""
-                    INSERT INTO resources_resource (doi, title, abstract, summary)
-                    VALUES (%s, %s, %s, %s)
-                """, (doi, title, abstract, summary))
-                logger.info(f"Added publication: {title}")
+                    INSERT INTO resources_resource (doi, title, abstract, summary, source)
+                    VALUES (%s, %s, %s, %s, %s)
+                """, (doi, title, abstract, summary, source))
+                logger.info(f"Added publication: {title} (Source: {source})")
         except Exception as e:
             logger.error(f"Error adding/updating publication: {e}")
             raise
-
 
     def update_expert(self, expert_id: str, updates: Dict[str, Any]) -> None:
         """Update expert information."""

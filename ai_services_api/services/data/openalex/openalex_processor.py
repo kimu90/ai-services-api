@@ -352,7 +352,7 @@ class OpenAlexProcessor:
                 
         return []
 
-    async def process_publications(self, pub_processor: PublicationProcessor):
+    async def process_publications(self, pub_processor: PublicationProcessor, source: str = 'openalex'):
         try:
             # Get all experts with ORCID, excluding those with "Unknown" first or last name
             experts = self.db.execute("""
@@ -366,7 +366,7 @@ class OpenAlexProcessor:
                 return
             
             publication_count = 0
-            max_publications = 25
+            max_publications = 10  # Changed to 10 total publications
             
             logger.info(f"Processing publications for {len(experts)} experts")
 
@@ -374,7 +374,7 @@ class OpenAlexProcessor:
                 for expert_id, first_name, last_name, orcid in experts:
                     try:
                         if publication_count >= max_publications:
-                            logger.info("Reached maximum publication limit")
+                            logger.info("Reached maximum total publication limit")
                             break
 
                         logger.info(f"Fetching publications for {first_name} {last_name}")
@@ -382,7 +382,7 @@ class OpenAlexProcessor:
                         
                         for work in publications:
                             try:
-                                if pub_processor.process_single_work(work):
+                                if pub_processor.process_single_work(work, source=source):
                                     publication_count += 1
                                     logger.info(
                                         f"Processed publication {publication_count}/{max_publications}: "
@@ -395,17 +395,17 @@ class OpenAlexProcessor:
                             except Exception as e:
                                 logger.error(f"Error processing work: {e}")
                                 continue
-                                
+                                    
                     except Exception as e:
                         logger.error(f"Error processing publications for {first_name} {last_name}: {e}")
                         continue
-                        
-            logger.info(f"Publications processing completed. Total processed: {publication_count}")
-            
+                            
+                logger.info(f"Publications processing completed. Total processed: {publication_count}")
+                
         except Exception as e:
             logger.error(f"Error in publications processing: {e}")
             raise
-            
+                
     async def _fetch_expert_publications(self, session: aiohttp.ClientSession, orcid: str,
                                        per_page: int = 5) -> List[Dict[str, Any]]:
         """Fetch publications for an expert from OpenAlex."""

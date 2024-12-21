@@ -2,7 +2,11 @@ import logging
 from typing import Dict, Optional
 from ai_services_api.services.data.openalex.database_manager import DatabaseManager
 from ai_services_api.services.data.openalex.ai_summarizer import TextSummarizer
-from ai_services_api.services.data.openalex.text_processor import safe_str, convert_inverted_index_to_text
+from ai_services_api.services.data.openalex.text_processor import (
+    safe_str, 
+    convert_inverted_index_to_text, 
+    truncate_text
+)
 
 logging.basicConfig(
     level=logging.INFO,
@@ -17,7 +21,7 @@ class PublicationProcessor:
         self.db = db
         self.summarizer = summarizer
 
-    def process_single_work(self, work: Dict) -> bool:
+    def process_single_work(self, work: Dict, source: str = 'openalex') -> bool:
         """Process a single publication work."""
         try:
             # Extract and clean basic publication data
@@ -36,22 +40,23 @@ class PublicationProcessor:
             abstract = convert_inverted_index_to_text(abstract_index)
 
             # Generate summary with retry logic
-            for attempt in range(3):
-                try:
-                    logger.info(f"Generating summary for: {title}")
-                    summary = self.summarizer.summarize(title, abstract)
-                    break
-                except Exception as e:
-                    if attempt == 2:  # Last attempt
-                        logger.error(f"Failed to generate summary after 3 attempts: {e}")
-                        summary = "Summary generation failed"
-                    else:
-                        logger.warning(f"Summary generation attempt {attempt + 1} failed: {e}")
-                        continue
+            logger.info(f"Generating summary for: {title}")
+            summary = self.summarizer.summarize(title, abstract)
+
+            # Truncate text to prevent database overflow
+            title = truncate_text(title)
+            abstract = truncate_text(abstract)
+            summary = truncate_text(summary)
 
             # Add publication to database
             try:
-                self.db.add_publication(doi, title, abstract, summary)
+                self.db.add_publication(
+                    doi, 
+                    title, 
+                    abstract, 
+                    summary, 
+                    source=source  # Add source parameter
+                )
             except Exception as e:
                 logger.error(f"Error adding publication to database: {e}")
                 return False

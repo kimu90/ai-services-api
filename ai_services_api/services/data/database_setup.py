@@ -223,6 +223,7 @@ def create_tables():
                 citation VARCHAR(255),
                 language VARCHAR(255),
                 identifiers JSONB,
+                source VARCHAR(50),  # Add this new column
                 created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
                 updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
             )
@@ -631,7 +632,8 @@ def create_tables():
             "CREATE INDEX IF NOT EXISTS idx_sentiment_metrics_emotion ON sentiment_metrics USING gin(emotion_labels)",
             "CREATE INDEX IF NOT EXISTS idx_sentiment_trends_session ON sentiment_trends(session_id)",
             "CREATE INDEX IF NOT EXISTS idx_sentiment_trends_period ON sentiment_trends(period_start, period_end)",
-            "CREATE INDEX IF NOT EXISTS idx_sentiment_trends_sentiment ON sentiment_trends(avg_sentiment)"
+            "CREATE INDEX IF NOT EXISTS idx_sentiment_trends_sentiment ON sentiment_trends(avg_sentiment)",
+            "CREATE INDEX IF NOT EXISTS idx_resources_source ON resources_resource(source)"
 
 
         ]
