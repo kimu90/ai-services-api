@@ -1,30 +1,31 @@
 import logging
-import os
-import json
 import numpy as np
-import re
-from datetime import datetime
-import time
+from sentence_transformers import SentenceTransformer
 from typing import AsyncIterable, List, Dict, Tuple, Optional, Any
 from enum import Enum
-from sentence_transformers import SentenceTransformer
 from langchain.schema.messages import HumanMessage, SystemMessage
 from langchain.memory import ConversationBufferWindowMemory
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain.callbacks import AsyncIteratorCallbackHandler
 import redis
 from dotenv import load_dotenv
+import os
+import time
+import json
+from datetime import datetime
+import re
+
+# Import the unified data manager
+from .data_manager import APHRCDataManager  # Add this import
 from .db_utils import DatabaseConnector
-# Load environment variables
-load_dotenv()
 
 # Set up logging
 logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__name__)
 
 class QueryIntent(Enum):
-    EXPERT = "expert"
-    FIELD = "field"
+    NAVIGATION = "navigation"
+    PUBLICATION = "publication"
     GENERAL = "general"
 
 class CustomAsyncCallbackHandler(AsyncIteratorCallbackHandler):
@@ -53,55 +54,59 @@ class CustomAsyncCallbackHandler(AsyncIteratorCallbackHandler):
 
 class GeminiLLMManager:
     def __init__(self):
-        # Initialize basic configurations
-        self.api_key = os.getenv("GEMINI_API_KEY")
-        self.redis_url = os.getenv("REDIS_URL", "redis://localhost:6379")
-        self.callback = CustomAsyncCallbackHandler()  # <-- Changed this line
-        self.confidence_threshold = 0.6
-        self.db_connector = DatabaseConnector()
-        self.db_conn = self.db_connector.get_connection()
-        # Initialize context management
-        self.context_window = []
-        self.max_context_items = 5
-        self.context_expiry = 1800  # 30 minutes
-        
-        # Initialize Redis connections with retry logic
-        self.setup_redis_connections()
-        
-        # Load embedding model
-        self.embedding_model = SentenceTransformer('all-MiniLM-L6-v2')
-        # Initialize intent patterns
-        self.intent_patterns = {
-            QueryIntent.EXPERT: {
-                'patterns': [
-                    (r'expert', 1.0),
-                    (r'researcher', 0.9),
-                    (r'scientist', 0.9),
-                    (r'professional', 0.8),
-                    (r'specialist', 0.8),
-                    (r'knowledge', 0.7),
-                    (r'expertise', 0.7),
-                    (r'field', 0.6),
-                    (r'domain', 0.6),
-                    (r'research area', 0.8)
-                ],
-                'threshold': 0.7
-            },
-            QueryIntent.FIELD: {
-                'patterns': [
-                    (r'field', 1.0),
-                    (r'domain', 1.0),
-                    (r'specialty', 0.9),
-                    (r'subject', 0.8),
-                    (r'area', 0.8),
-                    (r'discipline', 0.8),
-                    (r'expertise', 0.7),
-                    (r'research', 0.7),
-                    (r'study', 0.6)
-                ],
-                'threshold': 0.6
+        """Initialize the LLM manager with the unified APHRC data manager."""
+        try:
+            load_dotenv()
+            self.api_key = os.getenv("GEMINI_API_KEY")
+            self.callback = CustomAsyncCallbackHandler()
+            self.confidence_threshold = 0.6
+            
+            # Initialize the unified data manager
+            self.data_manager = APHRCDataManager()
+            
+            # Initialize context management
+            self.context_window = []
+            self.max_context_items = 5
+            self.context_expiry = 1800  # 30 minutes
+            
+            # Initialize intent patterns for different content types
+            self.intent_patterns = {
+                QueryIntent.NAVIGATION: {
+                    'patterns': [
+                        (r'website', 1.0),
+                        (r'page', 0.9),
+                        (r'find', 0.8),
+                        (r'where', 0.8),
+                        (r'how to', 0.7),
+                        (r'navigate', 0.9),
+                        (r'section', 0.8),
+                        (r'content', 0.7),
+                        (r'information about', 0.7)
+                    ],
+                    'threshold': 0.6
+                },
+                QueryIntent.PUBLICATION: {
+                    'patterns': [
+                        (r'research', 1.0),
+                        (r'paper', 1.0),
+                        (r'publication', 1.0),
+                        (r'study', 0.9),
+                        (r'article', 0.9),
+                        (r'journal', 0.8),
+                        (r'doi', 0.9),
+                        (r'published', 0.8),
+                        (r'authors', 0.8),
+                        (r'findings', 0.7)
+                    ],
+                    'threshold': 0.6
+                }
             }
-        }
+            
+            logger.info("GeminiLLMManager initialized successfully")
+        except Exception as e:
+            logger.error(f"Error initializing GeminiLLMManager: {e}")
+            raise
+
 
     def setup_redis_connections(self):
         """Setup Redis connections with retry logic."""
@@ -193,7 +198,7 @@ class GeminiLLMManager:
         
         max_intent = max(intent_scores.items(), key=lambda x: x[1])
         
-        if max_intent[1] >= self.intent_patterns[max_intent[0]].get('threshold', 0.6):
+        if max_intent[1] >= self.intent_patterns.get(max_intent[0], {}).get('threshold', 0.6):
             return max_intent[0], max_intent[1]
         
         return QueryIntent.GENERAL, 0.0
@@ -252,6 +257,15 @@ class GeminiLLMManager:
         # Maintain maximum window size
         if len(self.context_window) > self.max_context_items:
             self.context_window.pop(0)
+
+    async def query_relevant_content(self, message: str, intent: QueryIntent) -> List[Dict[str, Any]]:
+        """Query relevant content using the unified data manager."""
+        try:
+            results = await self.data_manager.query_content(message, intent)
+            return results
+        except Exception as e:
+            logger.error(f"Error querying content: {e}")
+            return []
 
     def query_redis_data(self, query_vector: np.ndarray, intent: QueryIntent, top_n=3) -> List[Dict]:
         """Query Redis for relevant expert data with confidence scoring."""
@@ -334,38 +348,30 @@ class GeminiLLMManager:
             return []
 
     def create_context(self, relevant_data: List[Dict]) -> str:
-        """Create context string from relevant expert data with improved formatting."""
+        """Create context string from relevant content."""
         context_parts = []
         
         for item in relevant_data:
             text = item['text']
             metadata = item['metadata']
-            validation = item['validation']
+            content_type = metadata.get('type', 'unknown')
             
-            # Format expert reference
-            expert_name = metadata.get('name', 'Unknown Expert')
-            unit = metadata.get('unit', '')
-            specialties = metadata.get('specialties', {})
-            
-            # Create a summary of expertise
-            expertise_summary = []
-            if specialties.get('expertise'):
-                expertise_summary.extend(specialties['expertise'][:3])
-            if specialties.get('fields'):
-                expertise_summary.extend(specialties['fields'][:2])
-            
-            expertise_text = ', '.join(expertise_summary) if expertise_summary else 'No specific expertise listed'
-            
-            # Add validation warnings if any
-            warnings = ""
-            if validation['warnings']:
-                warnings = f" (Note: {', '.join(validation['warnings'])})"
-            
-            context_parts.append(
-                f"Expert: {expert_name} ({unit})\n"
-                f"Expertise: {expertise_text}{warnings}\n"
-                f"Details: {text[:300]}..."
-            )
+            if content_type == 'navigation':
+                # Format website content
+                context_parts.append(
+                    f"Website Section: {metadata.get('title', 'Untitled')}\n"
+                    f"URL: {metadata.get('url', 'No URL')}\n"
+                    f"Content: {text[:300]}..."
+                )
+            elif content_type == 'publication':
+                # Format publication content
+                authors = json.loads(metadata.get('authors', '[]'))
+                context_parts.append(
+                    f"Publication: {metadata.get('title', 'Untitled')}\n"
+                    f"Authors: {', '.join(authors) if authors else 'Unknown'}\n"
+                    f"DOI: {metadata.get('doi', 'No DOI')}\n"
+                    f"Content: {text[:300]}..."
+                )
             
         return "\n\n".join(context_parts)
 
@@ -462,39 +468,70 @@ class GeminiLLMManager:
             top_k=40,
         )
 
+    def _create_system_message(self, intent: QueryIntent) -> str:
+        """Create appropriate system message based on intent."""
+        base_message = "You are an AI assistant for APHRC (African Population and Health Research Center). "
+        
+        if intent == QueryIntent.NAVIGATION:
+            return base_message + """
+            You help users navigate and understand APHRC's website content. 
+            Focus on providing clear directions and explanations about where to find information.
+            When referencing website sections, include the relevant URLs.
+            """
+        elif intent == QueryIntent.PUBLICATION:
+            return base_message + """
+            You help users find and understand APHRC's research publications. 
+            Focus on summarizing research findings and providing citation information.
+            Include DOIs when available and highlight key findings from the research.
+            """
+        else:
+            return base_message + """
+            You provide comprehensive information about APHRC's work, combining both 
+            website navigation help and research publication information as needed.
+            """
+
     async def generate_async_response(self, message: str) -> AsyncIterable[Dict[str, Any]]:
-        """Generate async response with sentiment analysis."""
+        """Generate async response with integrated content."""
         start_time = time.time()
         
         try:
             # Process message and detect intent
             message = self.handle_follow_up(message)
             intent, confidence = self.detect_intent(message)
-            query_vector = self.get_vector_from_message(message)
-            relevant_data = self.query_redis_data(query_vector, intent)
             
-            # Add sentiment analysis with await
+            # Get relevant content using unified data manager
+            relevant_data = await self.query_relevant_content(message, intent)
+            
+            # Add sentiment analysis
             sentiment_data = await self.analyze_sentiment(message)
-            logger.info(f"Generated sentiment data: {sentiment_data}")  # Added logging
             
-            # Create context
+            # Create context and manage window
             context = self.create_context(relevant_data)
             self.manage_context_window({'text': context, 'query': message})
             
-            # Track expert matches for analytics
-            expert_matches = []
+            # Track content matches for analytics
+            content_matches = []
             for data in relevant_data:
-                expert_matches.append({
-                    'expert_id': data['metadata'].get('id'),
+                content_matches.append({
+                    'type': data['metadata'].get('type', 'unknown'),
+                    'id': data['metadata'].get('id', 'unknown'),
                     'similarity_score': data['similarity'],
-                    'rank_position': len(expert_matches) + 1
+                    'rank_position': len(content_matches) + 1
                 })
 
+            # Prepare system message based on intent
+            system_message = self._create_system_message(intent)
+            
             # Generate response
             response_chunks = []
             buffer = ""
             
-            async for token in self.get_gemini_model().astream(input=message):
+            messages = [
+                SystemMessage(content=system_message),
+                HumanMessage(content=f"Context: {context}\n\nQuery: {message}")
+            ]
+            
+            async for token in self.get_gemini_model().astream(messages):
                 if not token.content:
                     continue
                     
@@ -517,7 +554,7 @@ class GeminiLLMManager:
                     'is_metadata': False
                 }
 
-            # Prepare final metadata with all components
+            # Prepare final metadata
             final_response = ''.join(response_chunks)
             response_time = time.time() - start_time
             
@@ -530,24 +567,16 @@ class GeminiLLMManager:
                         'type': intent.value,
                         'confidence': confidence
                     },
-                    'expert_matches': len(expert_matches),
-                    'sentiment': {
-                        'score': sentiment_data.get('sentiment_score', 0.0),
-                        'emotions': sentiment_data.get('emotion_labels', ['neutral']),
-                        'confidence': sentiment_data.get('confidence', 0.0),
-                        'aspects': sentiment_data.get('aspects', {
-                            'satisfaction': 0.0,
-                            'urgency': 0.0,
-                            'clarity': 0.0
-                        })
-                    }
+                    'content_matches': len(content_matches),
+                    'content_types': {
+                        'navigation': sum(1 for m in content_matches if m['type'] == 'navigation'),
+                        'publication': sum(1 for m in content_matches if m['type'] == 'publication')
+                    },
+                    'sentiment': sentiment_data
                 },
                 'error_occurred': False
             }
             
-            logger.info(f"Sending final metadata with sentiment: {metadata}")  # Added logging
-            
-            # Yield final metadata
             yield {
                 'is_metadata': True,
                 'metadata': metadata
@@ -555,43 +584,7 @@ class GeminiLLMManager:
             
         except Exception as e:
             logger.error(f"Error generating response: {e}")
-            error_message = self.format_response(
-                "I apologize, but I encountered an error. Please try again."
-            )
-            
-            # Send error response chunk
-            yield {
-                'chunk': error_message.encode("utf-8", errors="replace"),
-                'is_metadata': False
-            }
-            
-            # Send error metadata
-            yield {
-                'is_metadata': True,
-                'metadata': {
-                    'response': error_message,
-                    'timestamp': datetime.now().isoformat(),
-                    'metrics': {
-                        'response_time': time.time() - start_time,
-                        'intent': {
-                            'type': None,
-                            'confidence': 0.0
-                        },
-                        'expert_matches': 0,
-                        'sentiment': {
-                            'score': 0.0,
-                            'emotions': ['neutral'],
-                            'confidence': 0.0,
-                            'aspects': {
-                                'satisfaction': 0.0,
-                                'urgency': 0.0,
-                                'clarity': 0.0
-                            }
-                        }
-                    },
-                    'error_occurred': True
-                }
-            }
+            yield self._generate_error_response(start_time)
     def get_gemini_model(self):
         """Initialize and return the Gemini model."""
         return ChatGoogleGenerativeAI(

@@ -1,5 +1,5 @@
 from fastapi import APIRouter, HTTPException, BackgroundTasks, Request, Depends
-from typing import Optional, Dict
+from typing import Optional, Dict, List
 from pydantic import BaseModel
 from datetime import datetime
 import logging
@@ -24,16 +24,10 @@ message_handler = MessageHandler(llm_manager)
 db_connector = DatabaseConnector()
 
 # Response Models
-class ChatResponse(BaseModel):
-    response: str
-    timestamp: datetime
-    user_id: str
-    session_id: str
-    metrics: Optional[Dict] = None
-
-class ExpertMatchMetrics(BaseModel):
-    expert_id: str
-    name: str
+class ContentMatchMetrics(BaseModel):
+    content_id: str
+    content_type: str
+    title: str
     similarity_score: float
     rank: int
     clicked: bool = False
@@ -43,7 +37,14 @@ class ChatMetrics(BaseModel):
     total_interactions: int
     avg_response_time: float
     success_rate: float
-    expert_matches: list[ExpertMatchMetrics]
+    content_matches: Dict[str, List[ContentMatchMetrics]]
+
+class ChatResponse(BaseModel):
+    response: str
+    timestamp: datetime
+    user_id: str
+    session_id: str
+    metrics: Optional[Dict] = None
 
 @router.get("/chat/{query}")
 @limiter.limit("5/minute")
@@ -73,8 +74,8 @@ async def chat_endpoint(
             user_id=user_id,
             session_id=session_id
         ):
-            if isinstance(part, dict):
-                response_metadata = part
+            if isinstance(part, dict) and part.get('is_metadata'):
+                response_metadata = part.get('metadata')
             else:
                 if isinstance(part, bytes):
                     part = part.decode('utf-8')
@@ -101,13 +102,13 @@ async def chat_endpoint(
             
             # Prepare metrics for response
             metrics = {
-                'response_time': response_metadata['response_time'],
-                'intent': {
-                    'type': response_metadata['intent_type'],
-                    'confidence': response_metadata['intent_confidence']
+                'response_time': response_metadata.get('metrics', {}).get('response_time', 0.0),
+                'intent': response_metadata.get('metrics', {}).get('intent', {}),
+                'content_matches': {
+                    'navigation': response_metadata.get('metrics', {}).get('content_types', {}).get('navigation', 0),
+                    'publication': response_metadata.get('metrics', {}).get('content_types', {}).get('publication', 0)
                 },
-                'expert_matches': len(response_metadata['expert_matches']),
-                'error_occurred': response_metadata['error_occurred']
+                'error_occurred': response_metadata.get('error_occurred', False)
             }
         else:
             metrics = None
@@ -132,7 +133,8 @@ async def chat_endpoint(
                     'response': str(e),
                     'intent_type': None,
                     'intent_confidence': 0.0,
-                    'expert_matches': [],
+                    'navigation_matches': 0,
+                    'publication_matches': 0,
                     'response_time': (datetime.utcnow() - start_time).total_seconds(),
                     'error_occurred': True
                 }
@@ -159,7 +161,9 @@ async def get_chat_metrics(session_id: str):
                 s.session_id,
                 COUNT(i.id) as total_interactions,
                 AVG(i.response_time) as avg_response_time,
-                SUM(CASE WHEN NOT i.error_occurred THEN 1 ELSE 0 END)::FLOAT / COUNT(i.id) as success_rate
+                SUM(CASE WHEN NOT i.error_occurred THEN 1 ELSE 0 END)::FLOAT / COUNT(i.id) as success_rate,
+                SUM(i.navigation_matches) as total_navigation_matches,
+                SUM(i.publication_matches) as total_publication_matches
             FROM chat_sessions s
             LEFT JOIN chat_interactions i ON s.session_id = i.session_id
             WHERE s.session_id = %s
@@ -170,50 +174,60 @@ async def get_chat_metrics(session_id: str):
         if not session_metrics:
             raise HTTPException(status_code=404, detail="Session not found")
             
-        # Get expert matches for the session
+        # Get content matches for the session
         cursor.execute("""
             SELECT 
-                a.expert_id,
-                e.first_name || ' ' || e.last_name as name,
+                a.content_id,
+                a.content_type,
+                CASE 
+                    WHEN a.content_type = 'navigation' THEN 
+                        (SELECT title FROM navigation_content WHERE id = a.content_id::integer)
+                    WHEN a.content_type = 'publication' THEN 
+                        (SELECT title FROM resources_resource WHERE id = a.content_id::integer)
+                END as title,
                 a.similarity_score,
                 a.rank_position,
                 a.clicked
             FROM chat_analytics a
             JOIN chat_interactions i ON a.interaction_id = i.id
-            JOIN experts_expert e ON a.expert_id::integer = e.id
             WHERE i.session_id = %s
             ORDER BY i.timestamp DESC, a.rank_position
         """, (session_id,))
         
-        expert_matches = [
-            ExpertMatchMetrics(
-                expert_id=row[0],
-                name=row[1],
-                similarity_score=row[2],
-                rank=row[3],
-                clicked=row[4]
+        content_matches = {}
+        for row in cursor.fetchall():
+            match = ContentMatchMetrics(
+                content_id=row[0],
+                content_type=row[1],
+                title=row[2],
+                similarity_score=row[3],
+                rank=row[4],
+                clicked=row[5]
             )
-            for row in cursor.fetchall()
-        ]
+            
+            if row[1] not in content_matches:
+                content_matches[row[1]] = []
+            content_matches[row[1]].append(match)
         
         return ChatMetrics(
             session_id=session_metrics[0],
             total_interactions=session_metrics[1],
             avg_response_time=session_metrics[2],
             success_rate=session_metrics[3],
-            expert_matches=expert_matches
+            content_matches=content_matches
         )
         
     finally:
         cursor.close()
         db_conn.close()
 
-@router.post("/chat/expert-click")
-async def record_expert_click(
+@router.post("/chat/content-click")
+async def record_content_click(
     interaction_id: int,
-    expert_id: str
+    content_id: str,
+    content_type: str
 ):
-    """Record when a user clicks on an expert match."""
+    """Record when a user clicks on a content match."""
     db_conn = db_connector.get_connection()
     cursor = db_conn.cursor()
     
@@ -222,14 +236,16 @@ async def record_expert_click(
             UPDATE chat_analytics
             SET clicked = true,
                 updated_at = CURRENT_TIMESTAMP
-            WHERE interaction_id = %s AND expert_id = %s
+            WHERE interaction_id = %s 
+            AND content_id = %s 
+            AND content_type = %s
             RETURNING id
-        """, (interaction_id, expert_id))
+        """, (interaction_id, content_id, content_type))
         
         if cursor.fetchone() is None:
             raise HTTPException(
                 status_code=404,
-                detail="Expert match not found for this interaction"
+                detail="Content match not found for this interaction"
             )
             
         db_conn.commit()
@@ -271,18 +287,22 @@ async def get_chat_analytics(
                     COUNT(DISTINCT session_id) as total_sessions,
                     COUNT(DISTINCT user_id) as unique_users,
                     AVG(response_time) as avg_response_time,
+                    SUM(navigation_matches) as total_navigation_matches,
+                    SUM(publication_matches) as total_publication_matches,
                     SUM(CASE WHEN error_occurred THEN 1 ELSE 0 END)::FLOAT / COUNT(*) as error_rate
                 FROM chat_interactions
                 WHERE {where_clause}
             ),
-            ExpertMetrics AS (
+            ContentMetrics AS (
                 SELECT 
-                    COUNT(*) as total_expert_matches,
+                    content_type,
+                    COUNT(*) as total_matches,
                     AVG(similarity_score) as avg_similarity,
                     SUM(CASE WHEN clicked THEN 1 ELSE 0 END)::FLOAT / COUNT(*) as click_through_rate
                 FROM chat_analytics a
                 JOIN chat_interactions i ON a.interaction_id = i.id
                 WHERE {where_clause}
+                GROUP BY content_type
             ),
             IntentMetrics AS (
                 SELECT 
@@ -295,19 +315,24 @@ async def get_chat_analytics(
             )
             SELECT 
                 im.*,
-                em.*,
-                json_agg(json_build_object(
+                json_agg(DISTINCT jsonb_build_object(
+                    'content_type', cm.content_type,
+                    'total_matches', cm.total_matches,
+                    'avg_similarity', cm.avg_similarity,
+                    'click_through_rate', cm.click_through_rate
+                )) as content_metrics,
+                json_agg(DISTINCT jsonb_build_object(
                     'intent_type', intm.intent_type,
                     'count', intm.count,
                     'avg_confidence', intm.avg_confidence
                 )) as intent_metrics
             FROM InteractionMetrics im
-            CROSS JOIN ExpertMetrics em
+            CROSS JOIN ContentMetrics cm
             CROSS JOIN IntentMetrics intm
             GROUP BY 
-                im.total_interactions, im.total_sessions, im.unique_users, 
+                im.total_interactions, im.total_sessions, im.unique_users,
                 im.avg_response_time, im.error_rate,
-                em.total_expert_matches, em.avg_similarity, em.click_through_rate
+                im.total_navigation_matches, im.total_publication_matches
         """, params)
         
         analytics = cursor.fetchone()
@@ -322,13 +347,11 @@ async def get_chat_analytics(
                 "sessions": analytics[1],
                 "unique_users": analytics[2],
                 "avg_response_time": analytics[3],
-                "error_rate": analytics[4]
+                "navigation_matches": analytics[4],
+                "publication_matches": analytics[5],
+                "error_rate": analytics[6]
             },
-            "expert_matching": {
-                "total_matches": analytics[5],
-                "avg_similarity": analytics[6],
-                "click_through_rate": analytics[7]
-            },
+            "content_matching": analytics[7],
             "intents": analytics[8]
         }
         

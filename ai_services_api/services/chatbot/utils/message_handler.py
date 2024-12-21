@@ -63,23 +63,20 @@ class MessageHandler:
         db_conn = await self._get_db_connection()
         cursor = db_conn.cursor()
         try:
-            # Safely extract metrics
             metrics = response_data.get('metrics', {})
             
-            # Prepare expert matches count
-            expert_matches_count = 0
-            if isinstance(metrics.get('expert_matches'), list):
-                expert_matches_count = len(metrics['expert_matches'])
-            elif isinstance(metrics.get('expert_matches'), int):
-                expert_matches_count = metrics['expert_matches']
+            # Get content matches count based on type
+            content_matches = metrics.get('content_types', {})
+            navigation_matches = content_matches.get('navigation', 0)
+            publication_matches = content_matches.get('publication', 0)
             
             # Record interaction
             cursor.execute("""
                 INSERT INTO chat_interactions 
                 (session_id, user_id, query, response, timestamp, 
                 response_time, intent_type, intent_confidence, 
-                expert_matches, error_occurred)
-                VALUES (%s, %s, %s, %s, CURRENT_TIMESTAMP, %s, %s, %s, %s, %s)
+                navigation_matches, publication_matches, error_occurred)
+                VALUES (%s, %s, %s, %s, CURRENT_TIMESTAMP, %s, %s, %s, %s, %s, %s)
                 RETURNING id
             """, (
                 session_id, 
@@ -89,7 +86,8 @@ class MessageHandler:
                 metrics.get('response_time', 0.0),
                 metrics.get('intent', {}).get('type', 'general'),
                 metrics.get('intent', {}).get('confidence', 0.0),
-                expert_matches_count,
+                navigation_matches,
+                publication_matches,
                 response_data.get('error_occurred', False)
             ))
             
@@ -112,19 +110,20 @@ class MessageHandler:
                     sentiment.get('aspects', {}).get('clarity', 0.0)
                 ))
             
-            # Record expert matches in analytics
-            expert_matches = metrics.get('expert_matches', [])
-            if isinstance(expert_matches, list):
-                for match in expert_matches:
+            # Record content matches in analytics
+            content_matches = metrics.get('content_matches', [])
+            if isinstance(content_matches, list):
+                for match in content_matches:
                     if isinstance(match, dict):
                         cursor.execute("""
                             INSERT INTO chat_analytics 
-                            (interaction_id, expert_id, similarity_score, 
-                            rank_position, clicked)
-                            VALUES (%s, %s, %s, %s, false)
+                            (interaction_id, content_id, content_type, 
+                            similarity_score, rank_position, clicked)
+                            VALUES (%s, %s, %s, %s, %s, false)
                         """, (
                             interaction_id, 
-                            match.get('expert_id', 'unknown'),
+                            match.get('id', 'unknown'),
+                            match.get('type', 'unknown'),
                             match.get('similarity_score', 0.0),
                             match.get('rank_position', 0)
                         ))

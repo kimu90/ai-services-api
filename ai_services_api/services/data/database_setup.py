@@ -524,6 +524,18 @@ def create_tables():
                 result_type VARCHAR(50),
                 timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
+            """,
+            """
+            DO $$
+            BEGIN
+                IF NOT EXISTS (
+                    SELECT 1 
+                    FROM information_schema.columns 
+                    WHERE table_name='experts_expert' AND column_name='contact_details'
+                ) THEN
+                    ALTER TABLE experts_expert ADD COLUMN contact_details VARCHAR(255);
+                END IF;
+            END $$;
             """
         ]
 
@@ -785,6 +797,77 @@ def create_tables():
         cur.close()
         conn.close()
 
+def migrate_chat_tables():
+    """Migrate the chat tables to include navigation and publication matches."""
+    conn = get_db_connection()
+    cur = conn.cursor()
+    try:
+        # Drop the constraint first
+        cur.execute("""
+            DO $$ 
+            BEGIN
+                -- Drop the foreign key constraint if it exists
+                IF EXISTS (
+                    SELECT 1 
+                    FROM information_schema.table_constraints 
+                    WHERE constraint_name = 'chat_analytics_interaction_id_fkey'
+                    AND table_name = 'chat_analytics'
+                ) THEN
+                    ALTER TABLE chat_analytics 
+                    DROP CONSTRAINT chat_analytics_interaction_id_fkey;
+                END IF;
+            END $$;
+        """)
+
+        # Modify chat_interactions table
+        cur.execute("""
+            BEGIN;
+            -- Drop expert_matches column if it exists
+            ALTER TABLE chat_interactions 
+            DROP COLUMN IF EXISTS expert_matches;
+
+            -- Add new columns
+            ALTER TABLE chat_interactions 
+            ADD COLUMN IF NOT EXISTS navigation_matches INTEGER DEFAULT 0,
+            ADD COLUMN IF NOT EXISTS publication_matches INTEGER DEFAULT 0;
+
+            COMMIT;
+        """)
+
+        # Update chat_analytics table
+        cur.execute("""
+            BEGIN;
+            -- Drop expert_id column and add new content columns
+            ALTER TABLE chat_analytics 
+            DROP COLUMN IF EXISTS expert_id,
+            ADD COLUMN IF NOT EXISTS content_id VARCHAR(255),
+            ADD COLUMN IF NOT EXISTS content_type VARCHAR(50);
+
+            -- Add constraint for content_type
+            ALTER TABLE chat_analytics
+            ADD CONSTRAINT valid_content_type 
+            CHECK (content_type IN ('navigation', 'publication'));
+
+            -- Recreate the foreign key constraint
+            ALTER TABLE chat_analytics
+            ADD CONSTRAINT chat_analytics_interaction_id_fkey
+            FOREIGN KEY (interaction_id) 
+            REFERENCES chat_interactions(id);
+
+            COMMIT;
+        """)
+
+        logger.info("Successfully migrated chat tables")
+        return True
+
+    except Exception as e:
+        conn.rollback()
+        logger.error(f"Error migrating chat tables: {e}")
+        return False
+
+    finally:
+        cur.close()
+        conn.close()
 
 def load_initial_experts(expertise_csv: str):
     conn = get_db_connection()

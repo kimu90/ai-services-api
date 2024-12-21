@@ -14,8 +14,183 @@ class UnifiedAnalyticsDashboard:
     def __init__(self):
         self.db = DatabaseConnector()
         self.conn = self.db.get_connection()
+        # Initialize theme state
+        if 'theme' not in st.session_state:
+            st.session_state.theme = 'light'
+
+    def toggle_theme(self):
+        """Toggle between light and dark theme"""
+        if st.session_state.theme == 'light':
+            st.session_state.theme = 'dark'
+        else:
+            st.session_state.theme = 'light'
+        # Apply theme configuration
+        self.apply_theme()
+
+    def apply_theme(self):
+        """Apply comprehensive theme configuration"""
+        if st.session_state.theme == 'dark':
+            # Dark theme configuration
+            st.markdown("""
+                <style>
+                    /* Main app background and text */
+                    .stApp {
+                        background-color: #0E1117;
+                        color: #FAFAFA;
+                    }
+                    
+                    /* Sidebar */
+                    .css-1d391kg, [data-testid="stSidebar"] {
+                        background-color: #262730;
+                    }
+                    
+                    /* Metric cards */
+                    [data-testid="stMetricValue"] {
+                        background-color: #262730;
+                        color: #FFFFFF !important;
+                    }
+                    
+                    /* Inputs and controls */
+                    .stSelectbox, .stSlider, .stDateInput {
+                        background-color: #262730;
+                        color: #FFFFFF;
+                    }
+                    
+                    /* DataFrames */
+                    .stDataFrame {
+                        background-color: #262730;
+                    }
+                    .dataframe {
+                        background-color: #262730;
+                        color: #FFFFFF;
+                    }
+                    .dataframe th {
+                        background-color: #404040;
+                        color: #FFFFFF;
+                    }
+                    .dataframe td {
+                        background-color: #262730;
+                        color: #FFFFFF;
+                    }
+                    
+                    /* Headers and text */
+                    h1, h2, h3, h4, h5, h6, .css-10trblm {
+                        color: #FFFFFF !important;
+                    }
+                    .css-145kmo2 {
+                        color: #FFFFFF;
+                    }
+                    
+                    /* Buttons */
+                    .stButton > button {
+                        background-color: #262730;
+                        color: #FFFFFF;
+                        border: 1px solid #4F4F4F;
+                    }
+                    .stButton > button:hover {
+                        background-color: #404040;
+                        color: #FFFFFF;
+                        border: 1px solid #4F4F4F;
+                    }
+                    
+                    /* Warning messages */
+                    .stAlert {
+                        background-color: #262730;
+                        color: #FFFFFF;
+                    }
+                    
+                    /* Tooltips */
+                    .tooltip {
+                        background-color: #262730 !important;
+                        color: #FFFFFF !important;
+                    }
+                    
+                    /* Plotly figure backgrounds */
+                    .js-plotly-plot .plotly {
+                        background-color: #262730 !important;
+                    }
+                    
+                    /* Custom styling for selection boxes */
+                    .SelectBox {
+                        background-color: #262730 !important;
+                        color: #FFFFFF !important;
+                    }
+                </style>
+            """, unsafe_allow_html=True)
+            
+            # Update plot templates for dark theme
+            self.plot_template = {
+                'layout': {
+                    'paper_bgcolor': '#262730',
+                    'plot_bgcolor': '#262730',
+                    'font': {'color': '#FFFFFF'},
+                    'xaxis': {
+                        'gridcolor': '#4F4F4F',
+                        'linecolor': '#4F4F4F',
+                        'zerolinecolor': '#4F4F4F',
+                        'tickfont': {'color': '#FFFFFF'}
+                    },
+                    'yaxis': {
+                        'gridcolor': '#4F4F4F',
+                        'linecolor': '#4F4F4F',
+                        'zerolinecolor': '#4F4F4F',
+                        'tickfont': {'color': '#FFFFFF'}
+                    },
+                    'legend': {'font': {'color': '#FFFFFF'}}
+                }
+            }
+        else:
+            # Light theme configuration (default Streamlit)
+            st.markdown("""
+                <style>
+                    .stApp {
+                        background-color: #FFFFFF;
+                        color: #000000;
+                    }
+                </style>
+            """, unsafe_allow_html=True)
+            
+            # Update plot template for light theme
+            self.plot_template = {
+                'layout': {
+                    'paper_bgcolor': '#FFFFFF',
+                    'plot_bgcolor': '#FFFFFF',
+                    'font': {'color': '#000000'}
+                }
+            }
+
+    def update_plot_theme(self, fig):
+        """Update plot theme based on current theme setting"""
+        if st.session_state.theme == 'dark':
+            fig.update_layout(
+                paper_bgcolor='#262730',
+                plot_bgcolor='#262730',
+                font={'color': '#FFFFFF'},
+                xaxis=dict(
+                    gridcolor='#4F4F4F',
+                    linecolor='#4F4F4F',
+                    zerolinecolor='#4F4F4F'
+                ),
+                yaxis=dict(
+                    gridcolor='#4F4F4F',
+                    linecolor='#4F4F4F',
+                    zerolinecolor='#4F4F4F'
+                )
+            )
+        return fig
+
+    def create_plot(self, plot_func, *args, **kwargs):
+        """Wrapper for creating plots with proper theming"""
+        fig = plot_func(*args, **kwargs)
+        return self.update_plot_theme(fig)
 
     def create_sidebar_filters(self):
+        st.sidebar.title("Settings")
+        
+        # Theme toggle at the top of sidebar
+        theme_label = "🌙 Dark Mode" if st.session_state.theme == 'light' else "☀️ Light Mode"
+        st.sidebar.button(theme_label, on_click=self.toggle_theme)
+        
         st.sidebar.title("Filters")
         
         # Date range selector
@@ -30,10 +205,10 @@ class UnifiedAnalyticsDashboard:
 
         # Changed to dropdown
         self.analytics_type = st.sidebar.selectbox(
-        "Analytics Type",
-        ["chat", "search", "expert matching", "sentiment"],  # Added sentiment
-        index=0
-    )
+            "Analytics Type",
+            ["chat", "search", "expert matching", "sentiment"],
+            index=0
+        )
 
         # Additional recommendation network filters
         self.min_similarity = st.sidebar.slider(
@@ -46,7 +221,6 @@ class UnifiedAnalyticsDashboard:
             "Number of Experts to Show",
             5, 50, 20
         )
-
     def get_expert_metrics(self) -> pd.DataFrame:
         cursor = self.conn.cursor()
         try:
@@ -96,24 +270,91 @@ class UnifiedAnalyticsDashboard:
             cursor.close()
 
     def main(self):
-        st.set_page_config(page_title="APHRC Analytics Dashboard", layout="wide")
-        st.title("APHRC Analytics Dashboard")
-
+        """Initialize and run the dashboard with proper theme handling."""
+        st.set_page_config(
+            page_title="APHRC Analytics Dashboard",
+            layout="wide",
+            initial_sidebar_state="expanded"
+        )
+        
         # Sidebar filters
         self.create_sidebar_filters()
-
-        # Display analytics based on selected type
+        
+        # Apply theme settings
+        self.apply_theme()
+        
+        # Set title with theme-aware styling
+        if st.session_state.theme == 'dark':
+            title_color = "#FFFFFF"
+        else:
+            title_color = "#000000"
+            
+        st.markdown(
+            f'<h1 style="color: {title_color};">APHRC Analytics Dashboard</h1>',
+            unsafe_allow_html=True
+        )
+        
+        # Configure plot templates based on theme
+        if st.session_state.theme == 'dark':
+            plotly_template = 'plotly_dark'
+            plot_config = {
+                'layout': {
+                    'paper_bgcolor': '#262730',
+                    'plot_bgcolor': '#262730',
+                    'font': {'color': '#FFFFFF'},
+                    'xaxis': {'gridcolor': '#4F4F4F'},
+                    'yaxis': {'gridcolor': '#4F4F4F'}
+                }
+            }
+        else:
+            plotly_template = 'plotly_white'
+            plot_config = {
+                'layout': {
+                    'paper_bgcolor': '#FFFFFF',
+                    'plot_bgcolor': '#FFFFFF',
+                    'font': {'color': '#000000'}
+                }
+            }
+        
+        # Set global plotting defaults
+        px.defaults.template = plotly_template
+        for fig_type in [px.line, px.bar, px.scatter, px.area]:
+            fig_type.update_layout = lambda fig, **kwargs: dict(
+                fig.update_layout(**{**plot_config['layout'], **kwargs})
+            )
+        
+        # Display metrics and analytics based on selected type
         self.display_overall_metrics()
-
-        if self.analytics_type == "chat":
+        
+        # Display specific analytics based on selection
+        analytics_type = self.analytics_type.lower()
+        if analytics_type == "chat":
             self.display_chat_analytics()
-        elif self.analytics_type == "search":
+        elif analytics_type == "search":
             self.display_search_analytics()
-        elif self.analytics_type == "sentiment":  # New condition
+        elif analytics_type == "sentiment":
             self.display_sentiment_analytics()
-        else:  # expert matching
+        elif analytics_type == "expert matching":
             self.display_expert_analytics()
             self.display_recommendation_network()
+        
+        # Add footer with theme-aware styling
+        st.markdown(
+            f"""
+            <div style="
+                position: fixed;
+                bottom: 0;
+                width: 100%;
+                text-align: center;
+                padding: 10px;
+                background-color: {'#262730' if st.session_state.theme == 'dark' else '#FFFFFF'};
+                color: {'#FFFFFF' if st.session_state.theme == 'dark' else '#000000'};
+            ">
+                APHRC Analytics Dashboard • {datetime.now().year}
+            </div>
+            """,
+            unsafe_allow_html=True
+        )
 
     def get_chat_metrics(self) -> Dict[str, Any]:
         cursor = self.conn.cursor()
@@ -181,26 +422,57 @@ class UnifiedAnalyticsDashboard:
             cursor.close()
 
     def get_sentiment_metrics(self) -> pd.DataFrame:
+        """Get sentiment metrics with proper handling of emotion arrays."""
         cursor = self.conn.cursor()
         try:
             cursor.execute("""
-                WITH SentimentData AS (
+                WITH DailyMetrics AS (
                     SELECT 
                         DATE(sm.timestamp) as date,
                         AVG(sm.sentiment_score) as avg_sentiment,
                         AVG(sm.satisfaction_score) as satisfaction_score,
                         AVG(sm.urgency_score) as urgency_score,
                         AVG(sm.clarity_score) as clarity_score,
-                        MODE() WITHIN GROUP (UNNEST(emotion_labels)) as common_emotion,
                         COUNT(*) as total_interactions
                     FROM sentiment_metrics sm
                     WHERE sm.timestamp BETWEEN %s AND %s
                     GROUP BY DATE(sm.timestamp)
-                    ORDER BY date
+                ),
+                DailyEmotions AS (
+                    SELECT 
+                        DATE(sm.timestamp) as date,
+                        emotion
+                    FROM sentiment_metrics sm,
+                        LATERAL unnest(sm.emotion_labels) as emotion
+                    WHERE sm.timestamp BETWEEN %s AND %s
+                ),
+                CommonEmotion AS (
+                    SELECT 
+                        date,
+                        emotion as common_emotion,
+                        emotion_count,
+                        ROW_NUMBER() OVER (PARTITION BY date ORDER BY emotion_count DESC) as rn
+                    FROM (
+                        SELECT 
+                            date,
+                            emotion,
+                            COUNT(*) as emotion_count
+                        FROM DailyEmotions
+                        GROUP BY date, emotion
+                    ) counted
                 )
-                SELECT *
-                FROM SentimentData
-            """, (self.start_date, self.end_date))
+                SELECT 
+                    dm.date,
+                    dm.avg_sentiment,
+                    dm.satisfaction_score,
+                    dm.urgency_score,
+                    dm.clarity_score,
+                    COALESCE(ce.common_emotion, 'neutral') as common_emotion,
+                    dm.total_interactions
+                FROM DailyMetrics dm
+                LEFT JOIN CommonEmotion ce ON dm.date = ce.date AND ce.rn = 1
+                ORDER BY dm.date
+            """, (self.start_date, self.end_date, self.start_date, self.end_date))
             
             columns = [desc[0] for desc in cursor.description]
             data = cursor.fetchall()
@@ -218,9 +490,9 @@ class UnifiedAnalyticsDashboard:
             cursor.execute("""
                 SELECT 
                     (SELECT COUNT(*) FROM chat_interactions 
-                     WHERE timestamp BETWEEN %s AND %s) as total_chat_interactions,
+                    WHERE timestamp BETWEEN %s AND %s) as total_chat_interactions,
                     (SELECT COUNT(*) FROM search_logs 
-                     WHERE timestamp BETWEEN %s AND %s) as total_searches,
+                    WHERE timestamp BETWEEN %s AND %s) as total_searches,
                     (SELECT COUNT(DISTINCT user_id) FROM (
                         SELECT user_id FROM chat_interactions 
                         WHERE timestamp BETWEEN %s AND %s
@@ -229,9 +501,9 @@ class UnifiedAnalyticsDashboard:
                         WHERE timestamp BETWEEN %s AND %s
                     ) u) as unique_users,
                     (SELECT COUNT(*) FROM chat_analytics 
-                     WHERE clicked = true) +
+                    WHERE clicked = true) +
                     (SELECT COUNT(*) FROM expert_searches 
-                     WHERE clicked = true) as total_expert_clicks
+                    WHERE clicked = true) as total_expert_clicks
             """, (self.start_date, self.end_date) * 4)
             
             metrics = cursor.fetchone()
@@ -329,6 +601,9 @@ class UnifiedAnalyticsDashboard:
             line=dict(color='rgb(49, 130, 189)'),
             fill='tonexty'
         ))
+        
+        # Apply theme
+        fig = self.update_plot_theme(fig)
         fig.update_layout(
             title='Sentiment Trend Over Time',
             xaxis=dict(
@@ -357,32 +632,39 @@ class UnifiedAnalyticsDashboard:
                 sentiment_data['clarity_score'].mean()
             ]
             
-            fig = go.Figure(data=go.Scatterpolar(
+            radar_fig = go.Figure(data=go.Scatterpolar(
                 r=values,
                 theta=categories,
                 fill='toself'
             ))
-            fig.update_layout(
+            radar_fig = self.update_plot_theme(radar_fig)
+            radar_fig.update_layout(
                 polar=dict(radialaxis=dict(visible=True, range=[0, 1])),
                 showlegend=False,
                 title='Average Sentiment Components'
             )
-            st.plotly_chart(fig)
+            st.plotly_chart(radar_fig)
 
         with col2:
-            # Emotion Distribution Over Time
-            emotion_pivot = pd.crosstab(
-                sentiment_data['date'],
-                sentiment_data['common_emotion'],
-                normalize='index'
-            )
+            # Create emotion pivot table
+            dates = sentiment_data['date']
+            emotions = sentiment_data['common_emotion']
             
-            fig = px.area(
+            # Create pivot table with date index and emotions as columns
+            emotion_pivot = pd.crosstab(
+                dates,
+                emotions,
+                normalize='index'
+            ).fillna(0)
+            
+            # Create the area plot
+            emotion_fig = px.area(
                 emotion_pivot,
                 title='Emotion Distribution Trend',
                 labels={'value': 'Proportion', 'variable': 'Emotion'}
             )
-            st.plotly_chart(fig)
+            emotion_fig = self.update_plot_theme(emotion_fig)
+            st.plotly_chart(emotion_fig)
 
         # 4. Correlation Heatmap
         correlation_data = sentiment_data[[
@@ -393,13 +675,14 @@ class UnifiedAnalyticsDashboard:
             'total_interactions'
         ]].corr()
 
-        fig = px.imshow(
+        heatmap_fig = px.imshow(
             correlation_data,
             title='Correlation Between Metrics',
             color_continuous_scale='RdBu_r',
             aspect='auto'
         )
-        st.plotly_chart(fig)
+        heatmap_fig = self.update_plot_theme(heatmap_fig)
+        st.plotly_chart(heatmap_fig)
 
         # 5. Hourly Analysis
         cursor = self.conn.cursor()
@@ -419,41 +702,81 @@ class UnifiedAnalyticsDashboard:
             hourly_data = pd.DataFrame(cursor.fetchall(), 
                                     columns=['hour', 'avg_sentiment', 'avg_satisfaction', 'interaction_count'])
 
-            fig = go.Figure()
-            fig.add_trace(go.Scatter(
+            hourly_fig = go.Figure()
+            hourly_fig.add_trace(go.Scatter(
                 x=hourly_data['hour'],
                 y=hourly_data['avg_sentiment'],
                 name='Sentiment',
                 mode='lines+markers'
             ))
-            fig.add_trace(go.Bar(
+            hourly_fig.add_trace(go.Bar(
                 x=hourly_data['hour'],
                 y=hourly_data['interaction_count'],
                 name='Interactions',
                 yaxis='y2',
                 opacity=0.3
             ))
-            fig.update_layout(
+            
+            hourly_fig = self.update_plot_theme(hourly_fig)
+            hourly_fig.update_layout(
                 title='Hourly Sentiment Analysis',
                 xaxis=dict(title='Hour of Day'),
                 yaxis=dict(title='Average Sentiment'),
                 yaxis2=dict(title='Number of Interactions', overlaying='y', side='right'),
                 hovermode='x unified'
             )
-            st.plotly_chart(fig)
+            st.plotly_chart(hourly_fig)
 
         finally:
             cursor.close()
 
-    # 6. Latest Sentiment Trends Table
-    st.subheader("Recent Sentiment Trends")
-    latest_data = sentiment_data.tail(10).sort_values('date', ascending=False)
-    styled_data = latest_data.style.background_gradient(
-        subset=['avg_sentiment', 'satisfaction_score'],
-        cmap='RdYlGn'
-    )
-    st.dataframe(styled_data)
-
+        # 6. Latest Sentiment Trends Table
+        st.subheader("Recent Sentiment Trends")
+        latest_data = sentiment_data.tail(10).sort_values('date', ascending=False)
+        
+        # Format the data
+        display_cols = ['date', 'avg_sentiment', 'satisfaction_score', 'urgency_score', 
+                    'clarity_score', 'common_emotion', 'total_interactions']
+        display_data = latest_data[display_cols].copy()
+        
+        # Round numeric columns
+        numeric_cols = ['avg_sentiment', 'satisfaction_score', 'urgency_score', 'clarity_score']
+        display_data[numeric_cols] = display_data[numeric_cols].round(3)
+        
+        # Create styled dataframe
+        st.dataframe(
+            display_data,
+            column_config={
+                "date": st.column_config.DateColumn("Date"),
+                "avg_sentiment": st.column_config.NumberColumn(
+                    "Average Sentiment",
+                    help="Average sentiment score",
+                    format="%.3f"
+                ),
+                "satisfaction_score": st.column_config.NumberColumn(
+                    "Satisfaction",
+                    help="Satisfaction score",
+                    format="%.3f"
+                ),
+                "urgency_score": st.column_config.NumberColumn(
+                    "Urgency",
+                    help="Urgency score",
+                    format="%.3f"
+                ),
+                "clarity_score": st.column_config.NumberColumn(
+                    "Clarity",
+                    help="Clarity score",
+                    format="%.3f"
+                ),
+                "common_emotion": "Common Emotion",
+                "total_interactions": st.column_config.NumberColumn(
+                    "Total Interactions",
+                    help="Number of interactions"
+                )
+            },
+            hide_index=True,
+            use_container_width=True
+        )
     def display_search_analytics(self):
         st.subheader("Search Analytics")
         
