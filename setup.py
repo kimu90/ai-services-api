@@ -3,12 +3,14 @@ import logging
 import argparse
 import asyncio
 from dotenv import load_dotenv
+
 from ai_services_api.services.data.database_setup import (
     create_database_if_not_exists,
     create_tables,
     fix_experts_table,
     get_db_connection
 )
+
 from ai_services_api.services.data.openalex.openalex_processor import OpenAlexProcessor
 from ai_services_api.services.data.openalex.publication_processor import PublicationProcessor
 from ai_services_api.services.data.openalex.ai_summarizer import TextSummarizer
@@ -16,6 +18,9 @@ from ai_services_api.services.recommendation.graph_initializer import GraphDatab
 from ai_services_api.services.search.index_creator import ExpertSearchIndexManager
 from ai_services_api.services.search.redis_index_manager import ExpertRedisIndexManager
 from ai_services_api.services.data.openalex.orcid_processor import OrcidProcessor
+from ai_services_api.services.data.openalex.knowhub_scraper import KnowhubScraper
+from ai_services_api.services.data.openalex.website_scraper import WebsiteScraper
+from ai_services_api.services.data.openalex.researchnexus_scraper import ResearchNexusScraper
 
 logging.basicConfig(
     level=logging.INFO,
@@ -35,7 +40,10 @@ def setup_environment():
         'NEO4J_PASSWORD',
         'OPENALEX_API_URL',
         'GEMINI_API_KEY',
-        'REDIS_URL'
+        'REDIS_URL',
+        'ORCID_CLIENT_ID',
+        'ORCID_CLIENT_SECRET',
+        'KNOWHUB_BASE_URL'
     ]
     
     missing_vars = [var for var in required_vars if not os.getenv(var)]
@@ -73,40 +81,95 @@ def initialize_graph():
         return False
 
 async def process_data(args):
-    """Process experts and publications data."""
+    """Process experts and publications data from multiple sources."""
+    # Initialize processors and scrapers
     processor = OpenAlexProcessor()
-    orcid_processor = OrcidProcessor()  # Initialize ORCID processor
+    orcid_processor = OrcidProcessor()
+    knowhub_scraper = KnowhubScraper()
+    website_scraper = WebsiteScraper()
+    research_nexus_scraper = ResearchNexusScraper()  # Initialize with default institution ID
     
     try:
         # Process expert data
         logger.info("Loading initial expert data...")
         await processor.load_initial_experts(args.expertise_csv)
         
-        if not args.skip_openalex:
-            logger.info("Updating experts with OpenAlex data...")
-            await processor.update_experts_with_openalex()
-            logger.info("Expert data enrichment complete!")
+        if not args.skip_publications:
+            logger.info("Processing publications data...")
+            summarizer = TextSummarizer()
+            pub_processor = PublicationProcessor(processor.db, summarizer)
             
-            # Initialize publication processing components
-            if not args.skip_publications:
-                logger.info("Processing publications data...")
-                summarizer = TextSummarizer()
-                pub_processor = PublicationProcessor(processor.db, summarizer)
+            # Process publications from different sources
+            sources = [
+                ('OpenAlex', processor, 'openalex'),
+                ('ORCID', orcid_processor, 'orcid'),
+                ('Knowhub', knowhub_scraper, 'knowhub'),
+                ('Website', website_scraper, 'website'),
+                ('Research Nexus', research_nexus_scraper, 'researchnexus')
+            ]
+            
+            for name, source_processor, source_name in sources:
+                try:
+                    logger.info(f"Processing {name} publications...")
+                    
+                    if source_name in ['openalex', 'orcid']:
+                        # For OpenAlex and ORCID, use their process_publications method
+                        await source_processor.process_publications(pub_processor, source=source_name)
+                    elif source_name == 'knowhub':
+                        # Knowhub specific processing
+                        knowhub_publications = source_processor.fetch_publications(limit=10)
+                        for publication in knowhub_publications:
+                            pub_processor.process_single_work(publication, source=source_name)
+                    elif source_name == 'website':
+                        # Website scraper processing
+                        website_publications = source_processor.fetch_content(limit=10)
+                        for publication in website_publications:
+                            pub_dict = {
+                                'title': publication.title,
+                                'authors': publication.authors,
+                                'date': publication.date,
+                                'abstract': publication.abstract,
+                                'url': publication.url,
+                                'keywords': publication.keywords,
+                                'doi': publication.doi
+                            }
+                            pub_processor.process_single_work(pub_dict, source=source_name)
+                    elif source_name == 'researchnexus':
+                        # Research Nexus processing with error handling
+                        try:
+                            logger.info("Fetching publications from Research Nexus...")
+                            research_nexus_publications = source_processor.fetch_content(limit=10)
+                            
+                            if research_nexus_publications:
+                                for publication in research_nexus_publications:
+                                    try:
+                                        pub_processor.process_single_work(publication, source=source_name)
+                                    except Exception as e:
+                                        logger.error(f"Error processing Research Nexus publication: {str(e)}")
+                                        continue
+                            else:
+                                logger.warning("No publications retrieved from Research Nexus")
+                                
+                        except Exception as e:
+                            logger.error(f"Error fetching from Research Nexus: {str(e)}")
+                    
+                    logger.info(f"{name} Publications processing complete!")
                 
-                # Process OpenAlex publications
-                await processor.process_publications(pub_processor, source='openalex')
-                logger.info("OpenAlex Publications processing complete!")
-
-                # Process ORCID publications
-                await orcid_processor.process_publications(pub_processor, source='orcid')
-                logger.info("ORCID Publications processing complete!")
+                except Exception as e:
+                    logger.error(f"Error processing {name} publications: {e}")
+                    continue  # Continue with next source if one fails
         
     except Exception as e:
         logger.error(f"Data processing failed: {e}")
         raise
     finally:
+        # Ensure all resources are closed
         processor.close()
         orcid_processor.close()
+        knowhub_scraper.close()
+        website_scraper.close()
+        research_nexus_scraper.close()
+
 def create_search_index():
     """Create FAISS search index."""
     index_creator = ExpertSearchIndexManager()
@@ -221,6 +284,3 @@ def run():
 if __name__ == "__main__":
     import sys
     run()
-
-
-    

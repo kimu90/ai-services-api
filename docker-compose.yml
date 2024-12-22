@@ -1,3 +1,5 @@
+version: '3.8'
+
 services:
   api:
     build:
@@ -12,6 +14,7 @@ services:
       - ./ai_services_api/services/search/models:/code/ai_services_api/services/search/models:rw
       - ./cache:/code/cache:rw
       - ./scripts/init-script.sh:/code/scripts/init-script.sh:ro
+      - /dev/shm:/dev/shm  # Shared memory for Chrome
       - type: tmpfs
         target: /code/.initialization_complete
         tmpfs:
@@ -39,7 +42,15 @@ services:
       - SKIP_GRAPH=${SKIP_GRAPH:-false}
       - SKIP_SEARCH=${SKIP_SEARCH:-false}
       - SKIP_REDIS=${SKIP_REDIS:-false}
+      # Selenium specific environment variables
+      - DISPLAY=:99
+      - CHROME_BIN=/usr/bin/chromium
+      - CHROMEDRIVER_PATH=/usr/bin/chromedriver
+      - PYTHONUNBUFFERED=1
     user: "${UID:-1001}:${GID:-125}"
+    security_opt:
+      - seccomp=unconfined  # Required for Chrome in Docker
+    shm_size: 2g  # Increase shared memory size for Chrome
     depends_on:
       redis:
         condition: service_healthy
@@ -167,7 +178,7 @@ services:
     build: . 
     ports:
       - "8501:8501"
-    command: streamlit run /code/ai_services_api/services/search/app.py
+    command: streamlit run /code/ai_services_api/services/search/app.py --server.headless true
     volumes:
       - ./:/code:rw
       - ./logs/dashboard:/code/logs:rw
@@ -192,110 +203,6 @@ services:
     user: "${UID:-1001}:${GID:-125}"
     restart: unless-stopped
 
-  # Airflow Services (Commented out for development)
-  # To enable, remove the "#" from the following sections
-  
-  #airflow-webserver:
-  #  build:
-  #    context: .
-  #    dockerfile: Dockerfile.airflow
-  #  user: "${AIRFLOW_UID:-50000}:0"
-  #  command: bash -c "
-  #    airflow db migrate &&
-  #    airflow db check &&
-  #    airflow connections create-default-connections &&
-  #    airflow users create --username admin --firstname Admin --lastname User --role Admin --email briankimu97@gmail.com --password admin &&
-  #    airflow webserver"
-  #  depends_on:
-  #    postgres:
-  #      condition: service_healthy
-  #    redis:
-  #      condition: service_healthy
-  #  environment:
-  #    - AIRFLOW__DATABASE__SQL_ALCHEMY_CONN=postgresql+psycopg2://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-p0stgres}@postgres:5432/${POSTGRES_DB:-aphrc}
-  #    - AIRFLOW__CELERY__RESULT_BACKEND=db+postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-p0stgres}@postgres:5432/${POSTGRES_DB:-aphrc}
-  #    - AIRFLOW__CELERY__BROKER_URL=redis://redis:6379/1
-  #    - AIRFLOW__CORE__EXECUTOR=CeleryExecutor
-  #    - AIRFLOW__CORE__LOAD_EXAMPLES=False
-  #    - AIRFLOW__WEBSERVER__SECRET_KEY=${AIRFLOW_SECRET_KEY:-your-secret-key}
-  #    - AIRFLOW__CORE__FERNET_KEY=${AIRFLOW_FERNET_KEY:-''}
-  #    - REDIS_HOST=redis
-  #    - REDIS_PORT=6379
-  #    - NEO4J_URI=bolt://neo4j:7687
-  #    - NEO4J_USER=${NEO4J_USER:-neo4j}
-  #    - NEO4J_PASSWORD=${NEO4J_PASSWORD:-password123456789!}
-  #    - WEBSITE_URL=${WEBSITE_URL:-https://aphrc.org}
-  #    - GEMINI_API_KEY=${GEMINI_API_KEY}
-  #  volumes:
-  #    - ./dags:/opt/airflow/dags
-  #    - ./logs/airflow:/opt/airflow/logs
-  #    - ./plugins:/opt/airflow/plugins
-  #    - ./src:/opt/airflow/src
-  #    - ./data:/opt/airflow/data
-  #  ports:
-  #    - "8080:8080"
-  #  networks:
-  #    - aphrc-network
-  #  healthcheck:
-  #    test: ["CMD", "curl", "--fail", "http://localhost:8080/health"]
-  #    interval: 50s
-  #    timeout: 10s
-  #    retries: 5
-  #    start_period: 100s
-  #  restart: unless-stopped
-
-  #airflow-scheduler:
-  #  build:
-  #    context: .
-  #    dockerfile: Dockerfile.airflow
-  #  user: "${AIRFLOW_UID:-50000}:0"
-  #  command: airflow scheduler
-  #  depends_on:
-  #    airflow-webserver:
-  #      condition: service_healthy
-  #  environment:
-  #    - AIRFLOW__DATABASE__SQL_ALCHEMY_CONN=postgresql+psycopg2://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-p0stgres}@postgres:5432/${POSTGRES_DB:-aphrc}
-  #    - AIRFLOW__CELERY__RESULT_BACKEND=db+postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-p0stgres}@postgres:5432/${POSTGRES_DB:-aphrc}
-  #    - AIRFLOW__CELERY__BROKER_URL=redis://redis:6379/1
-  #    - AIRFLOW__CORE__EXECUTOR=CeleryExecutor
-  #    - AIRFLOW__CORE__LOAD_EXAMPLES=False
-  #    - AIRFLOW__CORE__FERNET_KEY=${AIRFLOW_FERNET_KEY:-''}
-  #  volumes:
-  #    - ./dags:/opt/airflow/dags
-  #    - ./logs/airflow:/opt/airflow/logs
-  #    - ./plugins:/opt/airflow/plugins
-  #    - ./src:/opt/airflow/src
-  #    - ./data:/opt/airflow/data
-  #  networks:
-  #    - aphrc-network
-  #  restart: unless-stopped
-
-  #airflow-worker:
-  #  build:
-  #    context: .
-  #    dockerfile: Dockerfile.airflow
-  #  user: "${AIRFLOW_UID:-50000}:0"
-  #  command: airflow celery worker
-  #  depends_on:
-  #    airflow-webserver:
-  #      condition: service_healthy
-  #  environment:
-  #    - AIRFLOW__DATABASE__SQL_ALCHEMY_CONN=postgresql+psycopg2://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-p0stgres}@postgres:5432/${POSTGRES_DB:-aphrc}
-  #    - AIRFLOW__CELERY__RESULT_BACKEND=db+postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-p0stgres}@postgres:5432/${POSTGRES_DB:-aphrc}
-  #    - AIRFLOW__CELERY__BROKER_URL=redis://redis:6379/1
-  #    - AIRFLOW__CORE__EXECUTOR=CeleryExecutor
-  #    - AIRFLOW__CORE__LOAD_EXAMPLES=False
-  #    - AIRFLOW__CORE__FERNET_KEY=${AIRFLOW_FERNET_KEY:-''}
-  #  volumes:
-  #    - ./dags:/opt/airflow/dags
-  #    - ./logs/airflow:/opt/airflow/logs
-  #    - ./plugins:/opt/airflow/plugins
-  #    - ./src:/opt/airflow/src
-  #    - ./data:/opt/airflow/data
-  #  networks:
-  #    - aphrc-network
-  #  restart: unless-stopped
-
 networks:
   aphrc-network:
     name: aphrc-network
@@ -305,4 +212,3 @@ volumes:
   postgres-data:
   redis-data:
   neo4j-data:
-  #airflow-logs:
