@@ -83,7 +83,6 @@ class PublicationProcessor:
             return False
 
     def _process_author(self, authorship: Dict, doi: str) -> None:
-        """Process a single author."""
         try:
             author = authorship.get('author', {})
             if not author:
@@ -98,8 +97,8 @@ class PublicationProcessor:
 
             # Add author and create publication link
             try:
-                author_id = self.db.add_author(author_name, orcid, author_identifier)
-                self.db.link_author_publication(author_id, doi)
+                tag_id = self.db.add_author(author_name, orcid, author_identifier)
+                self.db.link_author_publication(tag_id, doi)
                 logger.debug(f"Processed author: {author_name} for publication {doi}")
             except Exception as e:
                 logger.error(f"Error adding author to database: {e}")

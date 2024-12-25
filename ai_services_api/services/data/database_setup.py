@@ -312,7 +312,10 @@ def create_tables():
             """
             CREATE TABLE IF NOT EXISTS tags (
                 tag_id SERIAL PRIMARY KEY,
-                tag_name VARCHAR(255)
+                tag_name VARCHAR(255) NOT NULL,
+                tag_type VARCHAR(50) DEFAULT 'concept',
+                additional_metadata JSONB,
+                UNIQUE (tag_name, tag_type)
             )
             """,
             """
@@ -516,6 +519,15 @@ def create_tables():
             )
             """,
             """
+            CREATE TABLE IF NOT EXISTS publication_tags (
+                doi VARCHAR(255),
+                tag_id INTEGER,
+                PRIMARY KEY (doi, tag_id),
+                FOREIGN KEY (doi) REFERENCES resources_resource(doi),
+                FOREIGN KEY (tag_id) REFERENCES tags(tag_id)
+            )
+            """,
+            """
             CREATE TABLE IF NOT EXISTS collaboration_history (
                 id SERIAL PRIMARY KEY,
                 expert_id VARCHAR(255) NOT NULL,
@@ -633,7 +645,15 @@ def create_tables():
             "CREATE INDEX IF NOT EXISTS idx_sentiment_trends_session ON sentiment_trends(session_id)",
             "CREATE INDEX IF NOT EXISTS idx_sentiment_trends_period ON sentiment_trends(period_start, period_end)",
             "CREATE INDEX IF NOT EXISTS idx_sentiment_trends_sentiment ON sentiment_trends(avg_sentiment)",
-            "CREATE INDEX IF NOT EXISTS idx_resources_source ON resources_resource(source)"
+            "CREATE INDEX IF NOT EXISTS idx_resources_source ON resources_resource(source)",
+            "CREATE INDEX IF NOT EXISTS idx_tags_name ON tags (tag_name)",
+            "CREATE INDEX IF NOT EXISTS idx_tags_type ON tags (tag_type)",
+            "CREATE INDEX IF NOT EXISTS idx_publication_tags_doi ON publication_tags (doi)",
+            "CREATE INDEX IF NOT EXISTS idx_publication_tags_tag ON publication_tags (tag_id)",
+            "CREATE INDEX IF NOT EXISTS idx_tags_name_type ON tags (tag_name, tag_type)",
+            "CREATE INDEX IF NOT EXISTS idx_tags_metadata ON tags USING gin(additional_metadata)",
+            "DROP INDEX IF EXISTS idx_tags_name",
+            "DROP INDEX IF EXISTS idx_tags_type"
 
 
         ]
@@ -920,4 +940,3 @@ if __name__ == "__main__":
     create_database_if_not_exists()
     create_tables()
     fix_experts_table()
- 

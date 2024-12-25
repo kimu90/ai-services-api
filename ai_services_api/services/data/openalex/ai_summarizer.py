@@ -40,38 +40,42 @@ class TextSummarizer:
     def summarize(self, title: str, abstract: str) -> Optional[str]:
         """
         Generate a summary of the title and abstract using Gemini.
+        If abstract is missing, generates a brief description based on the title.
         
         Args:
             title: Title of the publication
             abstract: Abstract of the publication
             
         Returns:
-            str: Generated summary or fallback message if summarization fails
+            str: Generated summary or brief description
         """
         try:
-            if not abstract or abstract.strip() == "N/A":
-                logger.warning("No abstract available for summarization")
-                return "No abstract available for summarization"
+            if not title:
+                logger.error("Title is required for summarization")
+                return "Cannot generate summary: title is missing"
 
-            # Prepare prompt
-            prompt = self._create_prompt(title, abstract)
+            if not abstract or abstract.strip() == "N/A":
+                logger.info("No abstract available, generating description from title")
+                prompt = self._create_title_only_prompt(title)
+            else:
+                prompt = self._create_prompt(title, abstract)
             
             # Generate summary
             response = self.model.generate_content(prompt)
             summary = response.text.strip()
             
             if not summary:
-                logger.warning("Generated summary is empty")
-                return "Failed to generate meaningful summary"
+                logger.warning("Generated content is empty")
+                return "Failed to generate meaningful content"
             
             # Clean and format summary
             cleaned_summary = self._clean_summary(summary)
-            logger.info(f"Successfully generated summary for: {title[:100]}...")
+            logger.info(f"Successfully generated content for: {title[:100]}...")
             return cleaned_summary
 
         except Exception as e:
-            logger.error(f"Error in summarization: {e}")
-            return "Failed to generate summary due to technical issues"
+            logger.error(f"Error in content generation: {e}")
+            return "Failed to generate content due to technical issues"
 
     def _create_prompt(self, title: str, abstract: str) -> str:
         """
@@ -98,6 +102,30 @@ class TextSummarizer:
         4. Keep the summary under 200 words
         5. Retain technical terms and key concepts
         6. Begin directly with the summary, do not include phrases like "This paper" or "This research"
+        """
+
+    def _create_title_only_prompt(self, title: str) -> str:
+        """
+        Create a prompt for generating a brief description from title only.
+        
+        Args:
+            title: Title of the publication
+            
+        Returns:
+            str: Formatted prompt
+        """
+        return f"""
+        Please create a brief description based on the following academic publication title.
+        
+        Title: {title}
+        
+        Instructions:
+        1. Provide a single sentence describing what this publication likely discusses
+        2. Use phrases like "This publication appears to discuss..." or "This work likely explores..."
+        3. Make educated guesses about the main focus based on key terms in the title
+        4. Keep the description under 50 words
+        5. Use cautious language to acknowledge this is based only on the title
+        6. Retain any technical terms present in the title
         """
 
     def _clean_summary(self, summary: str) -> str:

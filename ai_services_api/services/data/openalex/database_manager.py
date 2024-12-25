@@ -3,6 +3,7 @@ import logging
 from typing import List, Dict, Any, Tuple, Optional
 from dotenv import load_dotenv
 from ai_services_api.services.data.database_setup import get_db_connection
+import json
 
 logging.basicConfig(
     level=logging.INFO,
@@ -246,7 +247,75 @@ class DatabaseManager:
         except Exception as e:
             logger.error(f"Error getting user queries: {e}")
             return []
+    def add_tag(self, tag_name: str, tag_type: str = 'concept') -> int:
+        """
+        Add a tag to the database or return existing tag ID.
+        
+        Args:
+            tag_name (str): Name of the tag.
+            tag_type (str, optional): Type of the tag. Defaults to 'concept'.
+        
+        Returns:
+            int: ID of the added or existing tag.
+        """
+        try:
+            # First, check if the tag already exists
+            result = self.execute("""
+                SELECT tag_id FROM tags WHERE tag_name = %s
+            """, (tag_name,))
+            
+            if result:
+                # Tag already exists, return its ID
+                return result[0][0]
+            
+            # Insert new tag
+            result = self.execute("""
+                INSERT INTO tags (tag_name, tag_type) 
+                VALUES (%s, %s)
+                RETURNING tag_id
+            """, (tag_name, tag_type))
+            
+            if result:
+                tag_id = result[0][0]
+                logger.info(f"Added new tag: {tag_name}")
+                return tag_id
+            
+            raise ValueError(f"Failed to add tag: {tag_name}")
+        
+        except Exception as e:
+            logger.error(f"Error adding tag {tag_name}: {e}")
+            raise
 
+    def link_publication_tag(self, doi: str, tag_id: int) -> None:
+        """
+        Link a publication with a tag.
+        
+        Args:
+            doi (str): DOI of the publication.
+            tag_id (int): ID of the tag.
+        """
+        try:
+            # Check if the link already exists
+            result = self.execute("""
+                SELECT 1 FROM publication_tags 
+                WHERE doi = %s AND tag_id = %s
+            """, (doi, tag_id))
+            
+            if result:
+                # Link already exists
+                return
+            
+            # Create new link
+            self.execute("""
+                INSERT INTO publication_tags (doi, tag_id)
+                VALUES (%s, %s)
+            """, (doi, tag_id))
+            
+            logger.info(f"Linked publication {doi} with tag {tag_id}")
+        
+        except Exception as e:
+            logger.error(f"Error linking publication {doi} with tag {tag_id}: {e}")
+            raise
     def add_query(self, query: str, result_count: int, search_type: str = 'semantic', 
                  user_id: Optional[str] = None) -> Optional[int]:
         """Add a search query to history."""
@@ -262,7 +331,80 @@ class DatabaseManager:
         except Exception as e:
             logger.error(f"Error adding query to history: {e}")
             raise
+    def add_author(self, author_name: str, orcid: Optional[str] = None, author_identifier: Optional[str] = None) -> int:
+        """
+        Add an author as a tag or return existing tag ID.
+        
+        Args:
+            author_name (str): Name of the author.
+            orcid (str, optional): ORCID identifier of the author.
+            author_identifier (str, optional): Other identifier for the author.
+        
+        Returns:
+            int: ID of the added or existing tag.
+        """
+        try:
+            # First, check if the author tag already exists
+            result = self.execute("""
+                SELECT tag_id FROM tags 
+                WHERE tag_name = %s AND tag_type = 'author'
+            """, (author_name,))
+            
+            if result:
+                # Author tag already exists, return its ID
+                return result[0][0]
+            
+            # Insert new author tag
+            result = self.execute("""
+                INSERT INTO tags (tag_name, tag_type, additional_metadata) 
+                VALUES (%s, 'author', %s)
+                RETURNING tag_id
+            """, (author_name, json.dumps({
+                'orcid': orcid,
+                'author_identifier': author_identifier
+            })))
+            
+            if result:
+                tag_id = result[0][0]
+                logger.info(f"Added new author tag: {author_name}")
+                return tag_id
+            
+            raise ValueError(f"Failed to add author tag: {author_name}")
+        
+        except Exception as e:
+            logger.error(f"Error adding author tag {author_name}: {e}")
+            raise
 
+    def link_author_publication(self, author_id: int, doi: str) -> None:
+        """
+        Link an author (tag) with a publication.
+        
+        Args:
+            author_id (int): ID of the author tag.
+            doi (str): DOI of the publication.
+        """
+        try:
+            # Check if the link already exists
+            result = self.execute("""
+                SELECT 1 FROM publication_tags 
+                WHERE doi = %s AND tag_id = %s
+            """, (doi, author_id))
+            
+            if result:
+                # Link already exists
+                return
+            
+            # Create new link
+            self.execute("""
+                INSERT INTO publication_tags (doi, tag_id)
+                VALUES (%s, %s)
+            """, (doi, author_id))
+            
+            logger.info(f"Linked publication {doi} with author tag {author_id}")
+        
+        except Exception as e:
+            logger.error(f"Error linking publication {doi} with author tag {author_id}: {e}")
+            raise
     def close(self):
         """Close database connection."""
         if hasattr(self, 'cur') and self.cur:

@@ -11,7 +11,7 @@ from ai_services_api.services.data.database_setup import (
     get_db_connection
 )
 
-from ai_services_api.services.data.openalex.openalex_processor import OpenAlexProcessor
+from ai_services_api.services.data.openalex.openalex_processor import OpenAlexProcessor 
 from ai_services_api.services.data.openalex.publication_processor import PublicationProcessor
 from ai_services_api.services.data.openalex.ai_summarizer import TextSummarizer
 from ai_services_api.services.recommendation.graph_initializer import GraphDatabaseInitializer
@@ -93,6 +93,11 @@ async def process_data(args):
         # Process expert data
         logger.info("Loading initial expert data...")
         await processor.load_initial_experts(args.expertise_csv)
+        
+        if not args.skip_openalex:
+            logger.info("Updating experts with OpenAlex data...")
+            await processor.update_experts_with_openalex()
+            logger.info("Expert data enrichment complete!")
         
         if not args.skip_publications:
             logger.info("Processing publications data...")

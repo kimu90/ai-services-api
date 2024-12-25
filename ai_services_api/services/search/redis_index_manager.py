@@ -66,7 +66,7 @@ class ExpertRedisIndexManager:
                 time.sleep(retry_delay)
 
     def fetch_experts(self) -> List[Dict[str, Any]]:
-        """Fetch all expert data."""
+        """Fetch all expert data from database."""
         max_retries = 3
         retry_delay = 2
         
@@ -155,8 +155,69 @@ class ExpertRedisIndexManager:
         except:
             return {}
 
+    def _create_text_content(self, expert: Dict[str, Any]) -> str:
+        """Create combined text content for embedding with additional safeguards."""
+        try:
+            # Ensure we have at least some basic information
+            name_parts = []
+            if expert.get('first_name'):
+                name_parts.append(str(expert['first_name']).strip())
+            if expert.get('last_name'):
+                name_parts.append(str(expert['last_name']).strip())
+            
+            # Start with basic identity
+            text_parts = []
+            if name_parts:
+                text_parts.append(f"Name: {' '.join(name_parts)}")
+            else:
+                text_parts.append("Name: Unknown Expert")
+
+            # Add other fields with explicit string conversion and cleanup
+            fields = {
+                'Email': expert.get('email'),
+                'Unit': expert.get('unit'),
+                'Bio': expert.get('bio'),
+                'ORCID': expert.get('orcid'),
+                'Designation': expert.get('designation'),
+                'Theme': expert.get('theme')
+            }
+            
+            for field, value in fields.items():
+                if value:  # Check if value exists and is not None
+                    cleaned_value = str(value).strip()
+                    if cleaned_value:  # Check if value is not empty after cleaning
+                        text_parts.append(f"{field}: {cleaned_value}")
+
+            # Handle knowledge expertise separately
+            expertise = expert.get('knowledge_expertise', {})
+            if expertise and isinstance(expertise, dict):
+                for key, value in expertise.items():
+                    if value:
+                        if isinstance(value, list):
+                            # Clean list values
+                            clean_values = [str(v).strip() for v in value if v is not None]
+                            clean_values = [v for v in clean_values if v]  # Remove empty strings
+                            if clean_values:
+                                text_parts.append(f"{key.title()}: {' | '.join(clean_values)}")
+                        elif isinstance(value, (str, int, float)):
+                            # Handle single values
+                            clean_value = str(value).strip()
+                            if clean_value:
+                                text_parts.append(f"{key.title()}: {clean_value}")
+
+            # Join all parts and ensure we have content
+            final_text = '\n'.join(text_parts)
+            if not final_text.strip():
+                return "Unknown Expert Profile"
+                
+            return final_text
+            
+        except Exception as e:
+            logger.error(f"Error creating text content for expert {expert.get('id', 'Unknown')}: {e}")
+            return "Error Processing Expert Profile"
+
     def create_redis_index(self) -> bool:
-        """Create Redis indexes for experts."""
+        """Create Redis indexes for experts with enhanced error handling."""
         try:
             logger.info("Creating Redis indexes for experts...")
             experts = self.fetch_experts()
@@ -165,53 +226,51 @@ class ExpertRedisIndexManager:
                 logger.warning("No experts found to index")
                 return False
             
+            success_count = 0
+            error_count = 0
+            
             for expert in experts:
                 try:
-                    # Create combined text for embedding
-                    text_content = self._create_text_content(expert)
+                    expert_id = expert.get('id', 'Unknown')
+                    logger.info(f"Processing expert {expert_id}")
                     
-                    # Generate embedding
-                    embedding = self.embedding_model.encode(text_content)
+                    # Create text content with additional logging
+                    text_content = self._create_text_content(expert)
+                    if not text_content or text_content.isspace():
+                        logger.warning(f"Empty text content generated for expert {expert_id}")
+                        continue
+
+                    # Log the text content for debugging
+                    logger.debug(f"Text content for expert {expert_id}: {text_content[:100]}...")
+                    
+                    # Generate embedding with explicit error handling
+                    try:
+                        if not isinstance(text_content, str):
+                            text_content = str(text_content)
+                        embedding = self.embedding_model.encode(text_content)
+                        if embedding is None or not isinstance(embedding, np.ndarray):
+                            logger.error(f"Invalid embedding generated for expert {expert_id}")
+                            continue
+                    except Exception as embed_err:
+                        logger.error(f"Embedding generation failed for expert {expert_id}: {embed_err}")
+                        continue
                     
                     # Store in Redis
                     self._store_expert_data(expert, text_content, embedding)
-                    
-                    logger.info(f"Indexed expert: {expert['first_name']} {expert['last_name']}")
+                    success_count += 1
+                    logger.info(f"Successfully indexed expert {expert_id}")
                     
                 except Exception as e:
-                    logger.error(f"Error indexing expert {expert.get('id', 'Unknown ID')}: {e}")
+                    error_count += 1
+                    logger.error(f"Error indexing expert {expert.get('id', 'Unknown')}: {str(e)}")
                     continue
             
-            logger.info(f"Successfully created Redis indexes for {len(experts)} experts")
-            return True
+            logger.info(f"Indexing complete. Successes: {success_count}, Failures: {error_count}")
+            return success_count > 0
             
         except Exception as e:
-            logger.error(f"Error creating Redis indexes: {e}")
+            logger.error(f"Fatal error in create_redis_index: {e}")
             return False
-
-    def _create_text_content(self, expert: Dict[str, Any]) -> str:
-        """Create combined text content for embedding."""
-        knowledge_expertise = expert['knowledge_expertise']
-        
-        text_parts = [
-            f"Name: {expert['first_name']} {expert['last_name']}",
-            f"Email: {expert['email']}" if expert['email'] else "",
-            f"Unit: {expert['unit']}" if expert['unit'] else "",
-            f"Bio: {expert['bio']}" if expert['bio'] else "",
-            f"ORCID: {expert['orcid']}" if expert['orcid'] else "",
-            f"Designation: {expert['designation']}" if expert['designation'] else "",
-            f"Theme: {expert['theme']}" if expert['theme'] else ""
-        ]
-
-        # Add expertise information from knowledge_expertise JSONB
-        if isinstance(knowledge_expertise, dict):
-            for key, value in knowledge_expertise.items():
-                if value and isinstance(value, list):
-                    text_parts.append(f"{key.title()}: {' | '.join(value)}")
-                elif value and isinstance(value, str):
-                    text_parts.append(f"{key.title()}: {value}")
-            
-        return '\n'.join(filter(None, text_parts))
 
     def _store_expert_data(self, expert: Dict[str, Any], text_content: str, 
                           embedding: np.ndarray) -> None:
@@ -231,17 +290,17 @@ class ExpertRedisIndexManager:
             
             # Store metadata
             metadata = {
-                'id': expert['id'],
-                'email': expert['email'],
-                'name': f"{expert['first_name']} {expert['last_name']}",
-                'unit': expert['unit'],
-                'bio': expert['bio'],
-                'orcid': expert['orcid'],
-                'designation': expert['designation'],
-                'theme': expert['theme'],
-                'expertise': json.dumps(expert['knowledge_expertise']),
-                'is_active': json.dumps(expert['is_active']),
-                'updated_at': expert['updated_at']
+                'id': str(expert['id']),  # Ensure id is string
+                'email': str(expert.get('email', '')),
+                'name': f"{expert.get('first_name', '')} {expert.get('last_name', '')}".strip(),
+                'unit': str(expert.get('unit', '')),
+                'bio': str(expert.get('bio', '')),
+                'orcid': str(expert.get('orcid', '')),
+                'designation': str(expert.get('designation', '')),
+                'theme': str(expert.get('theme', '')),
+                'expertise': json.dumps(expert.get('knowledge_expertise', {})),
+                'is_active': json.dumps(expert.get('is_active', False)),
+                'updated_at': expert.get('updated_at', '')
             }
             pipeline.hset(f"meta:{base_key}", mapping=metadata)
             
