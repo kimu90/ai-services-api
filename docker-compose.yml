@@ -178,7 +178,7 @@ services:
     build: . 
     ports:
       - "8501:8501"
-    command: streamlit run /code/ai_services_api/services/search/app.py --server.headless true
+    command: streamlit run /code/ai_services_api/services/analytics/app.py --server.headless true
     volumes:
       - ./:/code:rw
       - ./logs/dashboard:/code/logs:rw

@@ -4,4 +4,3 @@ tunnels:
   dashboard:
     proto: http
     addr: 8501
-    inspect: false
