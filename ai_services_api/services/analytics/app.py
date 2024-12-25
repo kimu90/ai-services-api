@@ -1,300 +1,198 @@
-# app.py
 import streamlit as st
-import plotly.express as px
-import plotly.graph_objects as go
-import pandas as pd
-from datetime import datetime, timedelta
-from pathlib import Path
-from pages.overview import OverviewPage
-from pages.expert_analytics import ExpertAnalyticsPage
-from pages.content_analytics import ContentAnalyticsPage
-from pages.user_engagement import UserEngagementPage
-from pages.ai_insights import AIInsightsPage
-from utils.theme_manager import ThemeManager
-from utils.database import DatabaseConnector
+from analytics.chat_analytics import get_chat_metrics, display_chat_analytics
+from analytics.search_analytics import get_search_metrics, display_search_analytics
+from analytics.expert_analytics import get_expert_metrics, display_expert_analytics
+from analytics.overview_analytics import get_overview_metrics, display_overview_analytics
+from analytics.content_analytics import get_content_metrics, display_content_analytics
+from analytics.usage_analytics import get_usage_metrics, display_usage_analytics
+from components.sidebar import create_sidebar_filters
+from utils.db_utils import DatabaseConnector
 from utils.logger import setup_logger
-from config.settings import APP_SETTINGS, ANALYTICS_SETTINGS
+from utils.theme import toggle_theme, apply_theme, update_plot_theme
+from datetime import datetime
+import logging
 
-logger = setup_logger(__name__)
-
-class KnowledgePortalAnalytics:
+class UnifiedAnalyticsDashboard:
+    """
+    Main dashboard class that integrates all analytics components and manages the application state.
+    Features a dynamic sidebar with interactive navigation and contextual filters.
+    """
+    
     def __init__(self):
-        """Initialize the Knowledge Portal Analytics dashboard."""
-        self.setup_environment()
-        self.db = DatabaseConnector()
-        self.theme_manager = ThemeManager()
-        self.initialize_session_state()
-        self.load_static_files()
+        """Initialize the dashboard with database connection and basic configuration."""
+        try:
+            self.logger = setup_logger(name="analytics_dashboard")
+        except Exception as e:
+            print(f"Warning: Logger initialization failed: {str(e)}")
+            self.logger = logging.getLogger("analytics_dashboard")
+            self.logger.setLevel(logging.INFO)
         
-    def setup_environment(self):
-        """Configure the Streamlit environment."""
-        st.set_page_config(
-            page_title="Knowledge Management Analytics",
-            page_icon="📊",
-            layout="wide",
-            initial_sidebar_state="expanded",
-            menu_items={
-                'Get Help': 'https://support.aphrc.org',
-                'Report a bug': 'https://github.com/aphrc/knowledge-portal/issues',
-                'About': """
-                # Knowledge Management Analytics Dashboard
-                Version 1.0.0
-                
-                This dashboard provides comprehensive analytics for the APHRC Knowledge Portal.
-                """
-            }
-        )
-
-    def initialize_session_state(self):
-        """Initialize session state variables."""
+        try:
+            self.db = DatabaseConnector()
+            self.conn = self.db.get_connection()
+        except Exception as e:
+            self.logger.error(f"Database connection failed: {str(e)}")
+            st.error("Failed to connect to the database. Please check your connection settings.")
+            return
+        
         if 'theme' not in st.session_state:
             st.session_state.theme = 'light'
-        
-        if 'date_range' not in st.session_state:
-            st.session_state.date_range = {
-                'start': datetime.now() - timedelta(days=30),
-                'end': datetime.now()
-            }
-        
-        if 'filters' not in st.session_state:
-            st.session_state.filters = {
-                'content_types': [],
-                'expert_areas': [],
-                'departments': []
-            }
-
-    def load_static_files(self):
-        """Load custom CSS and JavaScript files."""
-        try:
-            self.load_custom_css()
-            self.load_custom_js()
-        except Exception as e:
-            logger.error(f"Error loading static files: {e}")
-            st.error("Some styling elements could not be loaded.")
-
-    def load_custom_css(self):
-        """Load custom CSS styles."""
-        css_path = Path('static/css/custom.css')
-        if css_path.exists():
-            with open(css_path) as f:
-                st.markdown(f'<style>{f.read()}</style>', unsafe_allow_html=True)
-        else:
-            logger.warning("Custom CSS file not found")
-
-    def load_custom_js(self):
-        """Load custom JavaScript."""
-        js_path = Path('static/js/custom.js')
-        if js_path.exists():
-            with open(js_path) as f:
-                st.markdown(f'<script>{f.read()}</script>', unsafe_allow_html=True)
-        else:
-            logger.warning("Custom JavaScript file not found")
-
-    def create_sidebar(self):
-        """Create and configure the sidebar."""
-        with st.sidebar:
-            st.title("Dashboard Controls")
-            
-            # Theme toggle
-            theme_label = "🌙 Dark Mode" if st.session_state.theme == 'light' else "☀️ Light Mode"
-            if st.button(theme_label):
-                self.theme_manager.toggle_theme()
-            
-            st.divider()
-            
-            # Date range selection
-            st.subheader("Date Range")
-            col1, col2 = st.columns(2)
-            with col1:
-                start_date = st.date_input(
-                    "Start Date",
-                    st.session_state.date_range['start']
-                )
-            with col2:
-                end_date = st.date_input(
-                    "End Date",
-                    st.session_state.date_range['end']
-                )
-            
-            # Update session state
-            if start_date and end_date:
-                st.session_state.date_range = {
-                    'start': start_date,
-                    'end': end_date
-                }
-            
-            st.divider()
-            
-            # Global filters
-            st.subheader("Filters")
-            
-            # Content type filter
-            content_types = self.get_content_types()
-            selected_types = st.multiselect(
-                "Content Types",
-                options=content_types,
-                default=content_types
-            )
-            st.session_state.filters['content_types'] = selected_types
-            
-            # Expert areas filter
-            expert_areas = self.get_expert_areas()
-            selected_areas = st.multiselect(
-                "Expert Areas",
-                options=expert_areas
-            )
-            st.session_state.filters['expert_areas'] = selected_areas
-            
-            # Department filter
-            departments = self.get_departments()
-            selected_depts = st.multiselect(
-                "Departments",
-                options=departments
-            )
-            st.session_state.filters['departments'] = selected_depts
-            
-            st.divider()
-            
-            # Page selection
-            st.subheader("Navigation")
-            selected_page = st.radio(
-                "Select Page",
-                ["Overview", "Expert Analytics", "Content Analytics", 
-                 "User Engagement", "AI Insights"]
-            )
-            
-            # Export options
-            if st.button("Export Data"):
-                self.export_data()
-            
-            # Help and documentation
-            with st.expander("Help & Documentation"):
-                st.markdown("""
-                    ### Quick Links
-                    - [User Guide](https://docs.example.com/guide)
-                    - [API Documentation](https://docs.example.com/api)
-                    - [Support Portal](https://support.example.com)
-                    
-                    ### Need Help?
-                    Contact support at support@example.com
-                """)
-            
-            return selected_page
-
-    def get_content_types(self):
-        """Fetch available content types from database."""
-        cursor = self.db.get_connection().cursor()
-        try:
-            cursor.execute("""
-                SELECT DISTINCT content_type 
-                FROM content 
-                WHERE is_active = true
-                ORDER BY content_type
-            """)
-            return [row[0] for row in cursor.fetchall()]
-        finally:
-            cursor.close()
-
-    def get_expert_areas(self):
-        """Fetch available expert areas from database."""
-        cursor = self.db.get_connection().cursor()
-        try:
-            cursor.execute("""
-                SELECT DISTINCT area_name 
-                FROM expert_areas 
-                WHERE is_active = true
-                ORDER BY area_name
-            """)
-            return [row[0] for row in cursor.fetchall()]
-        finally:
-            cursor.close()
-
-    def get_departments(self):
-        """Fetch available departments from database."""
-        cursor = self.db.get_connection().cursor()
-        try:
-            cursor.execute("""
-                SELECT DISTINCT department_name 
-                FROM departments 
-                WHERE is_active = true
-                ORDER BY department_name
-            """)
-            return [row[0] for row in cursor.fetchall()]
-        finally:
-            cursor.close()
-
-    def export_data(self):
-        """Export dashboard data."""
-        try:
-            data = self.gather_export_data()
-            
-            # Create download button
-            st.download_button(
-                label="Download Data (CSV)",
-                data=data.to_csv(index=False),
-                file_name=f"dashboard_export_{datetime.now().strftime('%Y%m%d')}.csv",
-                mime="text/csv"
-            )
-        except Exception as e:
-            logger.error(f"Export error: {e}")
-            st.error("Failed to export data. Please try again.")
-
-    def gather_export_data(self):
-        """Gather data for export."""
-        # Implement data gathering logic
-        pass
 
     def main(self):
-        """Main application entry point."""
+        """Main application loop with enhanced sidebar integration."""
         try:
-            # Create sidebar and get selected page
-            selected_page = self.create_sidebar()
-            
-            # Initialize pages
-            pages = {
-                "Overview": OverviewPage,
-                "Expert Analytics": ExpertAnalyticsPage,
-                "Content Analytics": ContentAnalyticsPage,
-                "User Engagement": UserEngagementPage,
-                "AI Insights": AIInsightsPage
-            }
-            
-            # Render selected page
-            page_instance = pages[selected_page](
-                self.db,
-                self.theme_manager,
-                st.session_state.date_range,
-                st.session_state.filters
+            st.set_page_config(
+                page_title="APHRC Analytics Dashboard",
+                layout="wide",
+                initial_sidebar_state="expanded"
             )
-            page_instance.render()
+            
+            apply_theme()
+            
+            # Get filters and selected analytics type from enhanced sidebar
+            start_date, end_date, analytics_type, filters = create_sidebar_filters()
+            
+            # Display header with selected analytics type
+            self.display_header(analytics_type)
+            
+            # Display analytics content
+            try:
+                self.display_analytics(analytics_type, start_date, end_date, filters)
+            except Exception as e:
+                self.logger.error(f"Error displaying analytics: {str(e)}")
+                st.error("An error occurred while displaying analytics. Please try again.")
+            
+            self.display_footer()
             
         except Exception as e:
-            logger.error(f"Application error: {e}")
-            st.error("""
-                An error occurred while loading the dashboard. 
-                Please refresh the page or contact support if the problem persists.
-            """)
-            
-            if APP_SETTINGS['debug']:
-                st.exception(e)
+            self.logger.error(f"Application error: {str(e)}")
+            st.error("An unexpected error occurred. Please contact support if the issue persists.")
 
-    def __del__(self):
-        """Cleanup resources."""
+    def display_header(self, analytics_type):
+        """Display the dashboard header with current analytics type."""
+        title_color = "#FFFFFF" if st.session_state.theme == 'dark' else "#000000"
+        st.markdown(
+            f"""
+            <h1 style="color: {title_color};">APHRC Analytics Dashboard</h1>
+            <h3 style="color: {title_color};">{analytics_type} Analytics</h3>
+            """,
+            unsafe_allow_html=True
+        )
+
+    def display_analytics(self, analytics_type, start_date, end_date, filters):
+        """Display analytics based on selected type and filters."""
+        # Display overall metrics for context
+        self.display_overall_metrics(start_date, end_date)
+        
+        # Display specific analytics based on selection
+        analytics_map = {
+            "Overview": (get_overview_metrics, display_overview_analytics),
+            "Chat": (get_chat_metrics, display_chat_analytics),
+            "Search": (get_search_metrics, display_search_analytics),
+            "Expert": (get_expert_metrics, display_expert_analytics),
+            "Content": (get_content_metrics, display_content_analytics),
+            "Usage": (get_usage_metrics, display_usage_analytics)
+        }
+        
+        if analytics_type in analytics_map:
+            get_metrics, display_analytics = analytics_map[analytics_type]
+            
+            # Get metrics with appropriate filters
+            if analytics_type == "Expert":
+                metrics = get_metrics(
+                    self.conn, 
+                    start_date, 
+                    end_date, 
+                    filters.get('expert_count', 20)
+                )
+            else:
+                metrics = get_metrics(self.conn, start_date, end_date)
+            
+            # Display analytics with filters applied
+            display_analytics(metrics, filters)
+            
+            # Handle export if enabled
+            if 'export_format' in filters:
+                self.export_analytics(metrics, analytics_type, filters['export_format'])
+
+    def display_overall_metrics(self, start_date, end_date):
+        """Display overall platform metrics."""
+        col1, col2, col3, col4 = st.columns(4)
+        
+        cursor = self.conn.cursor()
         try:
-            if hasattr(self, 'db'):
-                self.db.close_connection()
+            cursor.execute("""
+                SELECT 
+                    (SELECT COUNT(*) FROM chat_interactions 
+                    WHERE timestamp BETWEEN %s AND %s) as total_chat_interactions,
+                    (SELECT COUNT(*) FROM search_logs 
+                    WHERE timestamp BETWEEN %s AND %s) as total_searches,
+                    (SELECT COUNT(DISTINCT user_id) FROM (
+                        SELECT user_id FROM chat_interactions 
+                        WHERE timestamp BETWEEN %s AND %s
+                        UNION
+                        SELECT user_id FROM search_logs 
+                        WHERE timestamp BETWEEN %s AND %s
+                    ) u) as unique_users,
+                    (SELECT COUNT(*) FROM chat_analytics 
+                    WHERE clicked = true) +
+                    (SELECT COUNT(*) FROM expert_searches 
+                    WHERE clicked = true) as total_expert_clicks
+            """, (start_date, end_date) * 4)
+            
+            metrics = cursor.fetchone()
+            
+            with col1:
+                st.metric("Total Interactions", f"{metrics[0] + metrics[1]:,}")
+            with col2:
+                st.metric("Chat Interactions", f"{metrics[0]:,}")
+            with col3:
+                st.metric("Unique Users", f"{metrics[2]:,}")
+            with col4:
+                st.metric("Expert Clicks", f"{metrics[3]:,}")
+                
+        finally:
+            cursor.close()
+
+    def export_analytics(self, metrics, analytics_type, export_format):
+        """Export analytics data in the specified format."""
+        try:
+            if export_format == "CSV":
+                st.download_button(
+                    f"Download {analytics_type} Analytics (CSV)",
+                    metrics.to_csv(index=False),
+                    f"{analytics_type.lower()}_analytics.csv",
+                    "text/csv"
+                )
+            elif export_format == "Excel":
+                # Implement Excel export
+                pass
+            elif export_format == "PDF":
+                # Implement PDF export
+                pass
         except Exception as e:
-            logger.error(f"Cleanup error: {e}")
+            self.logger.error(f"Export error: {str(e)}")
+            st.error("Failed to export analytics data. Please try again.")
+
+    def display_footer(self):
+        """Display the dashboard footer."""
+        st.markdown(
+            f"""
+            <div style="
+                position: fixed;
+                bottom: 0;
+                width: 100%;
+                text-align: center;
+                padding: 10px;
+                background-color: {'#262730' if st.session_state.theme == 'dark' else '#FFFFFF'};
+                color: {'#FFFFFF' if st.session_state.theme == 'dark' else '#000000'};
+            ">
+                APHRC Analytics Dashboard • {datetime.now().year}
+            </div>
+            """,
+            unsafe_allow_html=True
+        )
 
 if __name__ == "__main__":
-    try:
-        app = KnowledgePortalAnalytics()
-        app.main()
-    except Exception as e:
-        logger.critical(f"Fatal application error: {e}")
-        st.error("""
-            The application encountered a critical error and cannot continue.
-            Please contact support for assistance.
-        """)
-        if APP_SETTINGS['debug']:
-            st.exception(e)
+    dashboard = UnifiedAnalyticsDashboard()
+    dashboard.main()
