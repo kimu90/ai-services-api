@@ -1,5 +1,6 @@
 import pandas as pd
 import plotly.graph_objects as go
+import streamlit as st
 
 def get_expert_metrics(conn, start_date, end_date, expert_count):
     """
@@ -66,7 +67,7 @@ def get_expert_metrics(conn, start_date, end_date, expert_count):
     finally:
         cursor.close()
 
-def display_expert_analytics(expert_metrics):
+def display_expert_analytics(expert_metrics,filters):
     """
     Display expert analytics visualizations using the provided expert metrics DataFrame.
 

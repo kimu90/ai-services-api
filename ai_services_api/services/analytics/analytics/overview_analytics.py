@@ -82,7 +82,7 @@ def get_overview_metrics(conn, start_date, end_date):
     finally:
         cursor.close()
 
-def display_overview_analytics(metrics_df):
+def display_overview_analytics(metrics_df,filters):
     """
     Display overview analytics visualizations.
     

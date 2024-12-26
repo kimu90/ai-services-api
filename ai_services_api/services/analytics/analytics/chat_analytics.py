@@ -60,7 +60,7 @@ def get_chat_metrics(conn, start_date, end_date):
     finally:
         cursor.close()
 
-def display_chat_analytics(chat_metrics):
+def display_chat_analytics(chat_metrics,filters):
     """
     Display chat analytics visualizations using the provided chat metrics DataFrame.
 

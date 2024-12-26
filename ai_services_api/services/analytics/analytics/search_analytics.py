@@ -1,5 +1,6 @@
 import pandas as pd
 import plotly.express as px
+import streamlit as st
 
 def get_search_metrics(conn, start_date, end_date):
     """
@@ -37,7 +38,7 @@ def get_search_metrics(conn, start_date, end_date):
     finally:
         cursor.close()
 
-def display_search_analytics(search_metrics):
+def display_search_analytics(search_metrics,filters):
     """
     Display search analytics visualizations using the provided search metrics DataFrame.
 

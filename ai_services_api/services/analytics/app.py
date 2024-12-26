@@ -1,4 +1,3 @@
-import streamlit as st
 from analytics.chat_analytics import get_chat_metrics, display_chat_analytics
 from analytics.search_analytics import get_search_metrics, display_search_analytics
 from analytics.expert_analytics import get_expert_metrics, display_expert_analytics
@@ -11,7 +10,7 @@ from utils.logger import setup_logger
 from utils.theme import toggle_theme, apply_theme, update_plot_theme
 from datetime import datetime
 import logging
-
+import streamlit as st
 class UnifiedAnalyticsDashboard:
     """
     Main dashboard class that integrates all analytics components and manages the application state.
