@@ -366,7 +366,7 @@ class OpenAlexProcessor:
                 return
             
             publication_count = 0
-            max_publications = 10  # Total limit
+            max_publications = 10
             
             logger.info(f"Processing publications for {len(experts)} experts")
 
@@ -378,17 +378,18 @@ class OpenAlexProcessor:
                             break
 
                         logger.info(f"Fetching publications for {first_name} {last_name}")
-                        publications = await self._fetch_expert_publications(session, orcid)
+                        fetched_works = await self._fetch_expert_publications(session, orcid)
                         
-                        for work in publications:
+                        for work in fetched_works:
                             try:
                                 if publication_count >= max_publications:
                                     break
 
-                                # Start transaction for this work
+                                # Process publication and its tags in a single transaction
                                 self.db.execute("BEGIN")
                                 try:
-                                    if pub_processor.process_single_work(work, source=source):
+                                    processed = pub_processor.process_single_work(work, source=source)
+                                    if processed:
                                         publication_count += 1
                                         logger.info(
                                             f"Processed publication {publication_count}/{max_publications}: "
@@ -400,7 +401,7 @@ class OpenAlexProcessor:
                                     
                                 except Exception as e:
                                     self.db.execute("ROLLBACK")
-                                    logger.error(f"Error processing work, transaction rolled back: {e}")
+                                    logger.error(f"Error in transaction: {e}")
                                     continue
                                     
                             except Exception as e:
@@ -415,7 +416,7 @@ class OpenAlexProcessor:
                     
         except Exception as e:
             logger.error(f"Error in publications processing: {e}")
-            raise
+            return  # Changed from raise to return to match ORCID processor behavior
     async def _fetch_expert_publications(self, session: aiohttp.ClientSession, orcid: str,
                                        per_page: int = 5) -> List[Dict[str, Any]]:
         """Fetch publications for an expert from OpenAlex."""

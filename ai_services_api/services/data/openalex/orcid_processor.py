@@ -94,13 +94,6 @@ class OrcidProcessor:
             return []
 
     async def process_publications(self, pub_processor: PublicationProcessor, source: str = 'orcid') -> None:
-        """
-        Process publications for experts with ORCID.
-        
-        Args:
-            pub_processor (PublicationProcessor): Publication processor instance
-            source (str, optional): Source of publications. Defaults to 'orcid'.
-        """
         # Get experts with ORCID
         experts = self._get_experts_with_orcid()
         
@@ -110,9 +103,8 @@ class OrcidProcessor:
         
         logger.info(f"Processing publications for {len(experts)} experts")
         
-        # Process publications for each expert
         publication_count = 0
-        max_publications = 10  # Maximum total publications
+        max_publications = 10
         
         async with aiohttp.ClientSession() as session:
             for expert in experts:
@@ -121,29 +113,28 @@ class OrcidProcessor:
                         logger.info(f"Reached maximum total publication limit ({max_publications})")
                         break
                     
-                    # Fetch publications for this expert
                     logger.info(f"Fetching publications for {expert['first_name']} {expert['last_name']}")
-                    publications = await self._fetch_expert_publications(
+                    fetched_works = await self._fetch_expert_publications(
                         session, 
                         expert['orcid'],
-                        per_page=min(5, max_publications - publication_count)  # Dynamically adjust per_page
+                        per_page=min(5, max_publications - publication_count)
                     )
                     
-                    for summary in publications:
+                    for work_summary in fetched_works:
                         try:
                             if publication_count >= max_publications:
                                 break
                                 
                             # Convert ORCID work to standard format
-                            work = self._convert_orcid_to_standard_format(summary)
+                            work = self._convert_orcid_to_standard_format(work_summary)
                             if not work:
                                 continue
                                 
-                            # Start transaction for this work
+                            # Process publication and its tags in a single transaction
                             self.db.execute("BEGIN")
                             try:
-                                # Process publication with ORCID source
-                                if pub_processor.process_single_work(work, source=source):
+                                processed = pub_processor.process_single_work(work, source=source)
+                                if processed:
                                     publication_count += 1
                                     logger.info(
                                         f"Processed publication {publication_count}/{max_publications}: "
@@ -155,7 +146,7 @@ class OrcidProcessor:
                                     
                             except Exception as e:
                                 self.db.execute("ROLLBACK")
-                                logger.error(f"Error processing work, transaction rolled back: {e}")
+                                logger.error(f"Error in transaction: {e}")
                                 continue
                                 
                         except Exception as e:

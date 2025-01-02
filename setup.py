@@ -104,7 +104,7 @@ async def process_data(args):
     orcid_processor = OrcidProcessor()
     knowhub_scraper = KnowhubScraper()
     website_scraper = WebsiteScraper()
-    research_nexus_scraper = ResearchNexusScraper()  # Initialize with default institution ID
+    research_nexus_scraper = ResearchNexusScraper()
     
     try:
         # Process expert data
@@ -121,9 +121,6 @@ async def process_data(args):
             summarizer = TextSummarizer()
             pub_processor = PublicationProcessor(processor.db, summarizer)
             
-            # Limit the number of publications processed to 10
-            max_publications = 10
-            
             # Process publications from different sources
             sources = [
                 ('OpenAlex', processor, 'openalex'),
@@ -138,61 +135,41 @@ async def process_data(args):
                     logger.info(f"Processing {name} publications...")
                     
                     if source_name in ['openalex', 'orcid']:
-                        # For OpenAlex and ORCID, process up to the limit
                         await source_processor.process_publications(pub_processor, source=source_name)
-                        for i, publication in enumerate(publications):
-                            if i >= max_publications:
-                                break
-                            pub_processor.process_single_work(publication, source=source_name)
                     elif source_name == 'knowhub':
                         # Knowhub specific processing
-                        knowhub_publications = source_processor.fetch_publications(limit=max_publications)
+                        knowhub_publications = source_processor.fetch_publications(limit=10)
                         for i, publication in enumerate(knowhub_publications):
-                            if i >= max_publications:
+                            if i >= 10:
                                 break
                             pub_processor.process_single_work(publication, source=source_name)
                     elif source_name == 'website':
-                        # Website scraper processing
-                        website_publications = source_processor.fetch_content(limit=max_publications)
-                        for i, publication in enumerate(website_publications):
-                            if i >= max_publications:
-                                break
-                            pub_dict = {
-                                'title': publication.title,
-                                'authors': publication.authors,
-                                'date': publication.date,
-                                'abstract': publication.abstract,
-                                'url': publication.url,
-                                'keywords': publication.keywords,
-                                'doi': publication.doi
-                            }
-                            pub_processor.process_single_work(pub_dict, source=source_name)
-                    elif source_name == 'researchnexus':
-                        # Research Nexus processing with error handling
                         try:
-                            logger.info("Fetching publications from Research Nexus...")
-                            research_nexus_publications = source_processor.fetch_content(limit=max_publications)
-                            
-                            if research_nexus_publications:
-                                for i, publication in enumerate(research_nexus_publications):
-                                    if i >= max_publications:
-                                        break
-                                    try:
-                                        pub_processor.process_single_work(publication, source=source_name)
-                                    except Exception as e:
-                                        logger.error(f"Error processing Research Nexus publication: {str(e)}")
-                                        continue
-                            else:
-                                logger.warning("No publications retrieved from Research Nexus")
-                                
+                            # Website scraper processing
+                            website_publications = source_processor.fetch_content(limit=10)
+                            for publication in website_publications:
+                                try:
+                                    # Process each publication
+                                    pub_processor.process_single_work(publication, source=source_name)
+                                except Exception as e:
+                                    logger.error(f"Error processing website publication: {e}")
+                                    continue
                         except Exception as e:
-                            logger.error(f"Error fetching from Research Nexus: {str(e)}")
+                            logger.error(f"Error fetching website content: {e}")
+                    elif source_name == 'researchnexus':
+                        # Research Nexus processing
+                        research_nexus_publications = source_processor.fetch_content(limit=10)
+                        if research_nexus_publications:
+                            for i, publication in enumerate(research_nexus_publications):
+                                if i >= 10:
+                                    break
+                                pub_processor.process_single_work(publication, source=source_name)
                     
                     logger.info(f"{name} Publications processing complete!")
                 
                 except Exception as e:
                     logger.error(f"Error processing {name} publications: {e}")
-                    continue  # Continue with next source if one fails
+                    continue
         
     except Exception as e:
         logger.error(f"Data processing failed: {e}")

@@ -291,18 +291,7 @@ class DatabaseManager:
             logger.error(f"Error getting user queries: {e}")
             return []
     def add_tag(self, tag_info: Dict) -> int:
-        """
-        Add a tag to the database or return existing tag ID.
-        
-        Args:
-            tag_info: Dictionary containing:
-                - name: Name of the tag
-                - tag_type: Type of tag (author/domain)
-                - additional_metadata: JSON metadata for the tag
-        
-        Returns:
-            int: ID of the added or existing tag
-        """
+        """Add a tag to the database or return existing tag ID."""
         try:
             # First, check if the tag already exists
             result = self.execute("""
@@ -326,7 +315,7 @@ class DatabaseManager:
             
             if result:
                 tag_id = result[0][0]
-                logger.info(f"Added new tag: {tag_info['name']} (type: {tag_info['tag_type']})")
+                logger.info(f"Added new tag: {tag_info['name']}")
                 return tag_id
             
             raise ValueError(f"Failed to add tag: {tag_info['name']}")

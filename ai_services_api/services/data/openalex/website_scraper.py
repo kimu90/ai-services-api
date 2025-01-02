@@ -242,7 +242,7 @@ class WebsiteScraper:
             # Extract publication year and type
             year, pub_type = self._extract_year_and_type(element)
             
-            # Extract date
+            # Extract date and ensure we have a date_issue
             date_elem = element.select_one('.date, .elementor-post-date, time')
             date = None
             if date_elem:
@@ -255,16 +255,33 @@ class WebsiteScraper:
             excerpt_elem = element.select_one('.excerpt, .description, p')
             excerpt = safe_str(excerpt_elem.text.strip()) if excerpt_elem else ''
             
-            # Generate summary
-            summary = self._generate_summary(title, excerpt)
+            # Generate summary with fallback
+            try:
+                summary = self._generate_summary(title, excerpt)
+            except Exception as e:
+                logger.error(f"Error generating summary: {e}")
+                summary = excerpt or f"Publication about {title}"
             
-            # Extract authors
-            author_elem = element.select_one('.author, meta[name="author"], .elementor-post-author')
+            # Initialize tags list
+            tags = []
+            
+            # Extract and process authors
+            author_elems = element.select('.author, meta[name="author"], .elementor-post-author, .elementor-post-info__terms-list-item')
             authors = []
-            if author_elem:
-                author_names = author_elem.get('content', '') or author_elem.text.strip()
-                if author_names:
-                    authors = [name.strip() for name in author_names.split(',') if name.strip()]
+            for author_elem in author_elems:
+                author_name = author_elem.get('content', '') or author_elem.text.strip()
+                if author_name:
+                    authors.append(author_name)
+                    # Add author tag
+                    tags.append({
+                        'name': author_name,
+                        'tag_type': 'author',
+                        'additional_metadata': json.dumps({
+                            'source': 'website',
+                            'affiliation': 'APHRC',
+                            'section': section
+                        })
+                    })
             
             # Extract subtitle
             subtitle_elem = element.select_one('.subtitle, .elementor-post-subtitle')
@@ -272,22 +289,60 @@ class WebsiteScraper:
             if subtitle_elem:
                 subtitles = {'main': subtitle_elem.text.strip()}
             
-            # Extract keywords/tags
+            # Extract and process keywords/tags
+            keyword_elems = element.select('.tags a, .keywords a, .elementor-post-tags a, .elementor-post-info__terms-list-item')
             keywords = []
-            tag_elems = element.select('.tags a, .keywords a, .elementor-post-tags a')
-            for tag in tag_elems:
-                tag_text = tag.text.strip()
-                if tag_text:
+            for tag_elem in keyword_elems:
+                tag_text = tag_elem.text.strip()
+                if tag_text and tag_text not in keywords:
                     keywords.append(tag_text)
+                    # Add keyword tag
+                    tags.append({
+                        'name': tag_text,
+                        'tag_type': 'domain',
+                        'additional_metadata': json.dumps({
+                            'source': 'website',
+                            'type': 'keyword',
+                            'section': section
+                        })
+                    })
             
+            # Add publication type tag
+            if pub_type:
+                tags.append({
+                    'name': pub_type,
+                    'tag_type': 'publication_type',
+                    'additional_metadata': json.dumps({
+                        'source': 'website',
+                        'section': section,
+                        'original_type': pub_type
+                    })
+                })
+
+            # Extract categories/themes
+            category_elems = element.select('.category a, .theme a, .elementor-post-category')
+            for cat_elem in category_elems:
+                category = cat_elem.text.strip()
+                if category and category not in keywords:
+                    tags.append({
+                        'name': category,
+                        'tag_type': 'domain',
+                        'additional_metadata': json.dumps({
+                            'source': 'website',
+                            'type': 'category',
+                            'section': section
+                        })
+                    })
+                    keywords.append(category)
+
             # Construct complete publication record
             publication = {
                 'doi': doi,
                 'title': title,
-                'abstract': excerpt,
+                'abstract': excerpt or f"Publication about {title}",
                 'summary': summary,
                 'authors': authors,
-                'description': excerpt,
+                'description': excerpt or f"Publication about {title}",
                 'expert_id': None,
                 'type': pub_type or 'other',
                 'subtitles': json.dumps(subtitles),
@@ -306,13 +361,14 @@ class WebsiteScraper:
                     'source_id': f"aphrc-{section}-{hashlib.md5(url.encode()).hexdigest()[:8]}",
                     'keywords': keywords
                 }),
-                'source': 'website'
+                'source': 'website',
+                'tags': tags  # Add the collected tags
             }
             
             return publication
-            
+                
         except Exception as e:
-            self.logger.error(f"Error parsing publication: {str(e)}")
+            logger.error(f"Error parsing publication: {str(e)}")
             return None
 
     def _generate_summary(self, title: str, abstract: str) -> str:
@@ -320,11 +376,15 @@ class WebsiteScraper:
         try:
             title = truncate_text(title, max_length=200)
             abstract = truncate_text(abstract, max_length=1000)
-            summary = self.summarizer.summarize(title, abstract)
-            return truncate_text(summary, max_length=500)
+            try:
+                summary = self.summarizer.summarize(title, abstract)
+                return truncate_text(summary, max_length=500)
+            except Exception as e:
+                logger.error(f"Summary generation error: {e}")
+                return abstract if abstract else f"Publication about {title}"
         except Exception as e:
-            self.logger.error(f"Summary generation error: {e}")
-            return abstract[:500]  # Fallback to truncated abstract
+            logger.error(f"Error in summary generation: {e}")
+            return title  # Fallback to just the title
 
     def _parse_date(self, date_str: str) -> Optional[datetime]:
         """Parse date string into datetime object."""
