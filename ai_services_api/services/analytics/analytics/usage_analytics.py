@@ -1,21 +1,38 @@
 import pandas as pd
 import plotly.express as px
 import streamlit as st
+import time
+import logging
+from typing import Dict, Optional
+from datetime import datetime, timedelta
 
-def get_usage_metrics(conn, start_date, end_date):
-    """
-    Retrieve platform usage metrics from the database.
-    
-    Parameters:
-    - conn: Database connection object
-    - start_date: Start date for the analysis
-    - end_date: End date for the analysis
-    
-    Returns:
-    - Dictionary containing usage metrics DataFrames
-    """
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger('analytics_dashboard')
+
+def setup_database_connection(conn) -> None:
     cursor = conn.cursor()
     try:
+        cursor.execute("SET statement_timeout = '30s';")
+        cursor.execute("SET work_mem = '50MB';")
+    except Exception as e:
+        logger.warning(f"Failed to set database parameters: {str(e)}")
+    finally:
+        cursor.close()
+
+def get_usage_metrics(
+    conn,
+    start_date: datetime,
+    end_date: datetime
+) -> Dict[str, pd.DataFrame]:
+    start_time = time.time()
+    cursor = conn.cursor()
+    
+    try:
+        setup_database_connection(conn)
+        
         cursor.execute("""
             WITH UserActivityMetrics AS (
                 SELECT 
@@ -66,7 +83,7 @@ def get_usage_metrics(conn, start_date, end_date):
             PerformanceMetrics AS (
                 SELECT 
                     DATE(timestamp) as date,
-                    AVG(EXTRACT(epoch FROM response_time)) as avg_response_time,
+                    AVG(EXTRACT(epoch FROM avg_response_time)) as avg_response_time,
                     cache_hit_rate,
                     error_rate
                 FROM search_performance
@@ -75,111 +92,127 @@ def get_usage_metrics(conn, start_date, end_date):
             )
             SELECT 
                 json_build_object(
-                    'user_activity', (SELECT json_agg(row_to_json(UserActivityMetrics)) FROM UserActivityMetrics),
-                    'session_metrics', (SELECT json_agg(row_to_json(SessionMetrics)) FROM SessionMetrics),
-                    'performance_metrics', (SELECT json_agg(row_to_json(PerformanceMetrics)) FROM PerformanceMetrics)
+                    'activity_metrics', (SELECT json_agg(row_to_json(UserActivityMetrics)) FROM UserActivityMetrics),
+                    'sessions', (SELECT json_agg(row_to_json(SessionMetrics)) FROM SessionMetrics),
+                    'performance', (SELECT json_agg(row_to_json(PerformanceMetrics)) FROM PerformanceMetrics)
                 ) as metrics
-        """, (start_date, end_date) * 4)
+        """, (start_date, end_date, start_date, end_date, start_date, end_date, start_date, end_date))
         
-        result = cursor.fetchone()[0]
+        query_time = time.time() - start_time
+        if query_time > 5:
+            logger.warning(f"Slow query detected: {query_time:.2f} seconds")
         
+        raw_result = cursor.fetchone()
+        logger.info(f"Query result: {raw_result}")
+        
+        if raw_result is None or raw_result[0] is None:
+            logger.info("No data found for the specified date range")
+            return {
+                'activity_metrics': pd.DataFrame(),
+                'sessions': pd.DataFrame(),
+                'performance': pd.DataFrame()
+            }
+            
+        result = raw_result[0]
+        logger.info(f"Parsed result structure: {result.keys() if isinstance(result, dict) else 'Not a dict'}")
+        
+        metrics = {
+            'activity_metrics': pd.DataFrame(result.get('activity_metrics', [])),
+            'sessions': pd.DataFrame(result.get('sessions', [])),
+            'performance': pd.DataFrame(result.get('performance', []))
+        }
+        
+        return metrics
+        
+    except Exception as e:
+        logger.error(f"Error retrieving usage metrics: {str(e)}")
         return {
-            'user_activity': pd.DataFrame(result['user_activity']),
-            'session_metrics': pd.DataFrame(result['session_metrics']),
-            'performance_metrics': pd.DataFrame(result['performance_metrics'])
+            'activity_metrics': pd.DataFrame(),
+            'sessions': pd.DataFrame(),
+            'performance': pd.DataFrame()
         }
     finally:
         cursor.close()
 
-def display_usage_analytics(metrics):
-    """
-    Display usage analytics visualizations.
-    
-    Parameters:
-    - metrics: Dictionary containing usage metrics DataFrames
-    """
-    st.subheader("Platform Usage Analytics")
-
-    user_activity = metrics['user_activity']
-    session_metrics = metrics['session_metrics']
-    performance_metrics = metrics['performance_metrics']
-
-    # User Activity Overview
-    col1, col2, col3 = st.columns(3)
-    with col1:
-        st.metric(
-            "Total Users", 
-            f"{user_activity['total_users'].sum():,}"
-        )
-    with col2:
-        st.metric(
-            "Total Interactions", 
-            f"{user_activity['total_interactions'].sum():,}"
-        )
-    with col3:
-        avg_success = session_metrics['success_rate'].mean()
-        st.metric(
-            "Average Success Rate", 
-            f"{avg_success:.1%}"
-        )
-
-    # Daily User Activity
-    st.plotly_chart(
-        px.line(
-            user_activity,
-            x='date',
-            y=['total_users', 'chat_users', 'search_users'],
-            title='Daily Active Users by Type',
-            labels={
-                'value': 'Users',
-                'variable': 'User Type',
-                'date': 'Date'
-            }
-        )
-    )
-
-    # Session Analysis
-    col1, col2 = st.columns(2)
-    with col1:
-        st.plotly_chart(
-            px.line(
-                session_metrics,
-                x='date',
-                y='avg_session_duration',
-                title='Average Session Duration (seconds)',
-                labels={
-                    'avg_session_duration': 'Duration (s)',
-                    'date': 'Date'
-                }
+def display_usage_analytics(filters, metrics: Dict[str, pd.DataFrame]) -> None:
+    try:
+        st.subheader("Usage Analytics")
+        
+        activity_data = metrics.get('activity_metrics', pd.DataFrame())
+        session_data = metrics.get('sessions', pd.DataFrame())
+        perf_data = metrics.get('performance', pd.DataFrame())
+        
+        if activity_data.empty and session_data.empty and perf_data.empty:
+            st.warning("No data available for the selected date range.")
+            return
+            
+        # Overview metrics
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            total_users = activity_data['total_users'].sum() if not activity_data.empty else 0
+            st.metric("Total Users", f"{total_users:,}")
+        with col2:
+            total_sessions = session_data['total_sessions'].sum() if not session_data.empty else 0
+            st.metric("Total Sessions", f"{total_sessions:,}")
+        with col3:
+            avg_success = session_data['success_rate'].mean() if not session_data.empty else 0
+            st.metric("Average Success Rate", f"{avg_success:.1%}")
+        
+        # User Activity Trends
+        if not activity_data.empty:
+            st.plotly_chart(
+                px.line(
+                    activity_data,
+                    x='date',
+                    y=['chat_users', 'search_users'],
+                    title='Daily Active Users by Type',
+                    labels={'value': 'Users', 'variable': 'Type'}
+                ).update_layout(height=400),
+                use_container_width=True
             )
-        )
-    
-    with col2:
-        st.plotly_chart(
-            px.line(
-                session_metrics,
-                x='date',
-                y='avg_messages_per_session',
-                title='Average Messages per Session',
-                labels={
-                    'avg_messages_per_session': 'Messages',
-                    'date': 'Date'
-                }
+        
+        # Session Analysis
+        if not session_data.empty:
+            col1, col2 = st.columns(2)
+            with col1:
+                st.plotly_chart(
+                    px.line(
+                        session_data,
+                        x='date',
+                        y='avg_session_duration',
+                        title='Average Session Duration (seconds)'
+                    ).update_layout(height=300),
+                    use_container_width=True
+                )
+            
+            with col2:
+                st.plotly_chart(
+                    px.line(
+                        session_data,
+                        x='date',
+                        y='avg_messages_per_session',
+                        title='Average Messages per Session'
+                    ).update_layout(height=300),
+                    use_container_width=True
+                )
+        
+        # Performance Metrics
+        if not perf_data.empty:
+            st.subheader("System Performance")
+            st.plotly_chart(
+                px.line(
+                    perf_data,
+                    x='date',
+                    y=['avg_response_time', 'error_rate'],
+                    title='System Performance Over Time',
+                    labels={
+                        'value': 'Value',
+                        'variable': 'Metric'
+                    }
+                ).update_layout(height=400),
+                use_container_width=True
             )
-        )
-
-    # Performance Metrics
-    st.subheader("Platform Performance")
-    st.plotly_chart(
-        px.line(
-            performance_metrics,
-            x='date',
-            y=['avg_response_time', 'cache_hit_rate', 'error_rate'],
-            title='Performance Metrics Over Time',
-            labels={
-                'value': 'Value',
-                'variable': 'Metric',
-                'date': 'Date'
-            }
-        )
-    )
+            
+    except Exception as e:
+        logger.error(f"Error displaying analytics: {str(e)}")
+        st.error("An error occurred while displaying the analytics. Please try again later.")

@@ -1,6 +1,5 @@
-
 # ai_services_api/services/message/config.py
-from pydantic_settings import BaseSettings
+from pydantic import BaseSettings, validator
 from functools import lru_cache
 import os
 import logging
@@ -28,23 +27,20 @@ class Settings(BaseSettings):
         env_file = ".env"
         case_sensitive = True
         use_enum_values = True
+        allow_extra = True  # This replaces `extra = "allow"` in Pydantic v1
 
-        # Very important: this allows extra fields
-        extra = "allow"
-
-    @property
-    def validate_gemini_key(self) -> bool:
-        if not self.GEMINI_API_KEY:
+    # In Pydantic v1, we use validator instead of property
+    @validator('GEMINI_API_KEY')
+    def validate_gemini_key(cls, v: Optional[str]) -> str:
+        if not v:
             logger.error("GEMINI_API_KEY not found")
-            return False
-        return True
+            raise ValueError("GEMINI_API_KEY is not configured")
+        return v
 
 @lru_cache()
 def get_settings() -> Settings:
     try:
         settings = Settings()
-        if not settings.validate_gemini_key:
-            raise ValueError("GEMINI_API_KEY is not configured")
         return settings
     except Exception as e:
         logger.error(f"Error loading settings: {e}")

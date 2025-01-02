@@ -51,16 +51,33 @@ def setup_environment():
         raise ValueError(f"Missing required environment variables: {', '.join(missing_vars)}")
 
 def initialize_database(args):
-    """Initialize the PostgreSQL database."""
     try:
         logger.info("Ensuring database exists...")
         create_database_if_not_exists()
         
+        logger.info("Creating database tables...")
+        create_tables()  # Move this before fix_experts_table
+        
+        # Verify tables exist
+        conn = get_db_connection()
+        cur = conn.cursor()
+        try:
+            cur.execute("""
+                SELECT EXISTS (
+                    SELECT FROM information_schema.tables 
+                    WHERE table_name = 'resources_resource'
+                );
+            """)
+            if cur.fetchone()[0]:
+                logger.info("resources_resource table created successfully")
+            else:
+                raise Exception("Failed to create resources_resource table")
+        finally:
+            cur.close()
+            conn.close()
+        
         logger.info("Fixing experts table...")
         fix_experts_table()
-        
-        logger.info("Creating database tables...")
-        create_tables()
         
         logger.info("Database initialization complete!")
         

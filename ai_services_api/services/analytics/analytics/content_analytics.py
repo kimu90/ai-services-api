@@ -6,7 +6,6 @@ import logging
 from typing import Dict, Optional
 from datetime import datetime
 
-# Configure logging
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
@@ -14,17 +13,9 @@ logging.basicConfig(
 logger = logging.getLogger('analytics_dashboard')
 
 def setup_database_connection(conn) -> None:
-    """
-    Configure database connection parameters for optimal query performance.
-    
-    Parameters:
-    - conn: Database connection object
-    """
     cursor = conn.cursor()
     try:
-        # Set statement timeout to prevent long-running queries
         cursor.execute("SET statement_timeout = '30s';")
-        # Set work_mem for better query performance
         cursor.execute("SET work_mem = '50MB';")
     except Exception as e:
         logger.warning(f"Failed to set database parameters: {str(e)}")
@@ -38,28 +29,12 @@ def get_content_metrics(
     page_size: int = 10,
     offset: int = 0
 ) -> Dict[str, pd.DataFrame]:
-    """
-    Retrieve content interaction metrics from the database with improved error handling
-    and performance monitoring.
-    
-    Parameters:
-    - conn: Database connection object
-    - start_date: Start date for the analysis
-    - end_date: End date for the analysis
-    - page_size: Number of results per page for popular resources
-    - offset: Offset for pagination
-    
-    Returns:
-    - Dictionary containing content metrics DataFrames
-    """
     start_time = time.time()
     cursor = conn.cursor()
     
     try:
-        # Set up database parameters
         setup_database_connection(conn)
         
-        # Execute the main query with pagination
         cursor.execute("""
             WITH ResourceMetrics AS (
                 SELECT 
@@ -113,43 +88,39 @@ def get_content_metrics(
                 ) as metrics
         """, (start_date, end_date, start_date, end_date, offset, page_size, start_date, end_date))
         
-        # Log query execution time
         query_time = time.time() - start_time
         if query_time > 5:
             logger.warning(f"Slow query detected: {query_time:.2f} seconds")
         
         raw_result = cursor.fetchone()
+        logger.info(f"Query result: {raw_result}")
         
-        # Handle case where no data was returned
-        if raw_result is None:
-            logger.info("No data found for the specified date range")
+        try:
+            metrics_json = raw_result[0] if raw_result else None
+        except (IndexError, TypeError) as e:
+            logger.error(f"Invalid query result format: {raw_result}, Error: {str(e)}")
+            return {
+                'resource_metrics': pd.DataFrame(),
+                'popular_resources': pd.DataFrame(),
+                'tag_metrics': pd.DataFrame()
+            }
+        if not metrics_json:
+            logger.info("No data found - empty metrics")
             return {
                 'resource_metrics': pd.DataFrame(),
                 'popular_resources': pd.DataFrame(),
                 'tag_metrics': pd.DataFrame()
             }
             
-        result = raw_result[0] or {}
-        
-        # Validate and process results
-        if not isinstance(result, dict):
-            logger.error(f"Unexpected result type: {type(result)}")
-            raise ValueError("Query returned invalid data format")
-            
-        # Initialize missing keys with empty lists
-        for key in ['resource_metrics', 'popular_resources', 'tag_metrics']:
-            if key not in result or result[key] is None:
-                result[key] = []
-                
+        result = raw_result[0]
         return {
-            'resource_metrics': pd.DataFrame(result['resource_metrics']),
-            'popular_resources': pd.DataFrame(result['popular_resources']),
-            'tag_metrics': pd.DataFrame(result['tag_metrics'])
+            'resource_metrics': pd.DataFrame(result.get('resource_metrics', [])),
+            'popular_resources': pd.DataFrame(result.get('popular_resources', [])),
+            'tag_metrics': pd.DataFrame(result.get('tag_metrics', []))
         }
         
     except Exception as e:
         logger.error(f"Error retrieving content metrics: {str(e)}")
-        # Return empty DataFrames on error
         return {
             'resource_metrics': pd.DataFrame(),
             'popular_resources': pd.DataFrame(),
@@ -158,14 +129,7 @@ def get_content_metrics(
     finally:
         cursor.close()
 
-def display_content_analytics(metrics: Dict[str, pd.DataFrame]) -> None:
-    """
-    Display content analytics visualizations with improved error handling
-    and empty state handling.
-    
-    Parameters:
-    - metrics: Dictionary containing content metrics DataFrames
-    """
+def display_content_analytics(metrics: Dict[str, pd.DataFrame], conn=None) -> None:
     try:
         st.subheader("Content Analytics")
         
@@ -173,12 +137,10 @@ def display_content_analytics(metrics: Dict[str, pd.DataFrame]) -> None:
         popular_resources = metrics['popular_resources']
         tag_metrics = metrics['tag_metrics']
         
-        # Display warning if no data is available
         if resource_metrics.empty and popular_resources.empty and tag_metrics.empty:
             st.warning("No data available for the selected date range. Please adjust your filters and try again.")
             return
             
-        # Overview metrics
         col1, col2, col3 = st.columns(3)
         with col1:
             total_resources = resource_metrics['total_resources'].sum() if not resource_metrics.empty else 0
@@ -190,7 +152,6 @@ def display_content_analytics(metrics: Dict[str, pd.DataFrame]) -> None:
             unique_users = resource_metrics['unique_users'].max() if not resource_metrics.empty else 0
             st.metric("Unique Users", f"{unique_users:,}")
         
-        # Resource Type Analysis
         if not resource_metrics.empty and total_resources > 0:
             col1, col2 = st.columns(2)
             with col1:
@@ -224,7 +185,6 @@ def display_content_analytics(metrics: Dict[str, pd.DataFrame]) -> None:
                     use_container_width=True
                 )
         
-        # Popular Resources
         if not popular_resources.empty:
             st.subheader("Most Popular Resources")
             st.dataframe(
@@ -233,7 +193,6 @@ def display_content_analytics(metrics: Dict[str, pd.DataFrame]) -> None:
                 .style.background_gradient(subset=['view_count'], cmap='Blues')
             )
         
-        # Tag Analysis
         if not tag_metrics.empty:
             st.subheader("Content Tag Analysis")
             st.plotly_chart(
@@ -253,7 +212,6 @@ def display_content_analytics(metrics: Dict[str, pd.DataFrame]) -> None:
                 use_container_width=True
             )
             
-            # Top Tags Table
             st.subheader("Top Content Tags")
             st.dataframe(
                 tag_metrics[['tag_name', 'tag_type', 'resource_count', 'user_count']]
@@ -263,5 +221,4 @@ def display_content_analytics(metrics: Dict[str, pd.DataFrame]) -> None:
             
     except Exception as e:
         logger.error(f"Error displaying analytics: {str(e)}")
-        st.error("An error occurred while displaying the analytics. Please try again later or contact support if the problem persists.")
-
+        st.error("An error occurred while displaying analytics. Please try again later or contact support if the problem persists.")

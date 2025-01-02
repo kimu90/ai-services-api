@@ -7,7 +7,8 @@ import json
 import secrets
 import string
 import pandas as pd
-
+from typing import List, Dict, Any, Optional
+from contextlib import contextmanager
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s: %(message)s', datefmt='%Y-%m-%d %H:%M:%S')
 logger = logging.getLogger(__name__)
 
@@ -34,6 +35,31 @@ def get_db_connection(dbname=None):
     except psycopg2.OperationalError as e:
         logger.error(f"Error connecting to the database: {e}")
         raise
+@contextmanager
+def get_db_cursor(autocommit: bool = False):
+    """Context manager for database connections."""
+    conn = get_db_connection()
+    conn.autocommit = autocommit
+    cur = conn.cursor()
+    try:
+        yield cur, conn
+    except Exception as e:
+        if not autocommit:
+            conn.rollback()
+        raise
+    finally:
+        cur.close()
+        conn.close()
+
+def verify_table_exists(cur, table_name: str) -> bool:
+    """Verify if a specific table exists."""
+    cur.execute("""
+        SELECT EXISTS (
+            SELECT FROM information_schema.tables 
+            WHERE table_name = %s
+        );
+    """, (table_name,))
+    return cur.fetchone()[0]
 
 def create_database_if_not_exists():
     params = get_connection_params()
@@ -165,19 +191,46 @@ def fix_experts_table():
         conn.close()
 
 def create_tables():
+    """Create all database tables with proper dependency handling."""
     conn = get_db_connection()
-    conn.autocommit = True  # Switch to autocommit mode
+    conn.autocommit = True  # Keep autocommit mode
     cur = conn.cursor()
     try:
-        # Create extension in separate transaction
+        # Create extension
         try:
-            cur.execute("CREATE EXTENSION IF NOT EXISTS \"uuid-ossp\";")
-            logger.info("UUID extension creation/verification completed")
+            cur.execute('CREATE EXTENSION IF NOT EXISTS "uuid-ossp";')
+            logger.info("UUID extension creation completed")
         except Exception as e:
             logger.warning(f"UUID extension warning: {e}")
 
-        # Define all table creation statements
-        table_statements = [
+        # Core tables (no foreign key dependencies)
+        core_tables = [
+            # Core table: resources_resource
+            """
+            CREATE TABLE IF NOT EXISTS resources_resource (
+                id SERIAL PRIMARY KEY,
+                doi VARCHAR(255),
+                title TEXT NOT NULL,
+                abstract TEXT,
+                summary TEXT,
+                authors TEXT[],
+                description TEXT,
+                expert_id INTEGER,
+                type VARCHAR(100),
+                subtitles JSONB,
+                publishers JSONB,
+                collection VARCHAR(255),
+                date_issue VARCHAR(255),
+                citation VARCHAR(255),
+                language VARCHAR(255),
+                identifiers JSONB,
+                source VARCHAR(50),
+                created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+            )
+            """,
+
+            # Core table: experts_expert
             """
             CREATE TABLE IF NOT EXISTS experts_expert (
                 id SERIAL PRIMARY KEY,
@@ -205,35 +258,16 @@ def create_tables():
                 middle_name VARCHAR(200)
             )
             """,
-            """
-            CREATE TABLE IF NOT EXISTS resources_resource (
-                id SERIAL PRIMARY KEY,
-                doi VARCHAR(255),
-                title TEXT NOT NULL,
-                abstract TEXT,
-                summary TEXT,
-                authors TEXT[],
-                description TEXT,
-                expert_id INTEGER,
-                type VARCHAR(100),
-                subtitles JSONB,
-                publishers JSONB,
-                collection VARCHAR(255),
-                date_issue VARCHAR(255),
-                citation VARCHAR(255),
-                language VARCHAR(255),
-                identifiers JSONB,
-                source VARCHAR(50),  # Add this new column
-                created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-                updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
-            )
-            """,
+
+            # Core table: auth_group
             """
             CREATE TABLE IF NOT EXISTS auth_group (
                 id SERIAL PRIMARY KEY,
                 name VARCHAR(150)
             )
             """,
+
+            # Core table: auth_permission
             """
             CREATE TABLE IF NOT EXISTS auth_permission (
                 id SERIAL PRIMARY KEY,
@@ -242,12 +276,8 @@ def create_tables():
                 codename VARCHAR(100)
             )
             """,
-            """
-            CREATE TABLE IF NOT EXISTS author_publication_ai (
-                author_id INTEGER,
-                doi VARCHAR(255)
-            )
-            """,
+
+            # Core table: authors_ai
             """
             CREATE TABLE IF NOT EXISTS authors_ai (
                 author_id SERIAL PRIMARY KEY,
@@ -256,39 +286,8 @@ def create_tables():
                 author_identifier VARCHAR(255)
             )
             """,
-            """
-            CREATE TABLE IF NOT EXISTS chat_chatbox (
-                id SERIAL PRIMARY KEY,
-                created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-                updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-                expert_from_id INTEGER,
-                expert_to_id INTEGER,
-                name VARCHAR(200)
-            )
-            """,
-            """
-            CREATE TABLE IF NOT EXISTS chat_chatboxmessage (
-                id SERIAL PRIMARY KEY,
-                message TEXT,
-                read BOOLEAN DEFAULT FALSE,
-                created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-                updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-                expert_from_id INTEGER,
-                expert_to_id INTEGER,
-                chatbox_id INTEGER
-            )
-            """,
-            """
-            CREATE TABLE IF NOT EXISTS expertise_categories (
-                id SERIAL PRIMARY KEY,
-                expert_orcid TEXT,
-                original_term TEXT,
-                domain TEXT,
-                field TEXT,
-                subfield TEXT,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-            """,
+
+            # Core table: publications_ai
             """
             CREATE TABLE IF NOT EXISTS publications_ai (
                 doi VARCHAR(255) PRIMARY KEY,
@@ -297,18 +296,8 @@ def create_tables():
                 summary TEXT
             )
             """,
-            """
-            CREATE TABLE IF NOT EXISTS roles_role (
-                id SERIAL PRIMARY KEY,
-                name VARCHAR(255),
-                description VARCHAR(255),
-                active BOOLEAN DEFAULT TRUE,
-                permissions JSONB,
-                created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-                updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-                default_expert_role BOOLEAN DEFAULT FALSE
-            )
-            """,
+
+            # Core table: tags
             """
             CREATE TABLE IF NOT EXISTS tags (
                 tag_id SERIAL PRIMARY KEY,
@@ -318,24 +307,8 @@ def create_tables():
                 UNIQUE (tag_name, tag_type)
             )
             """,
-            """
-            CREATE TABLE IF NOT EXISTS query_history_ai (
-                query_id SERIAL PRIMARY KEY,
-                query TEXT,
-                timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                result_count INTEGER,
-                search_type VARCHAR(50),
-                user_id TEXT
-            )
-            """,
-            """
-            CREATE TABLE IF NOT EXISTS term_frequencies (
-                term VARCHAR(255) PRIMARY KEY,
-                frequency INTEGER DEFAULT 1,
-                expert_id INTEGER,
-                last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-            """,
+
+            # Core table: search_logs
             """
             CREATE TABLE IF NOT EXISTS search_logs (
                 id SERIAL PRIMARY KEY,
@@ -351,60 +324,8 @@ def create_tables():
                 filters JSONB
             )
             """,
-            """
-            CREATE TABLE IF NOT EXISTS expert_messages (
-                id SERIAL PRIMARY KEY,
-                sender_id INTEGER REFERENCES experts_expert(id),
-                receiver_id INTEGER REFERENCES experts_expert(id),
-                content TEXT,
-                draft BOOLEAN DEFAULT TRUE,
-                created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-                updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
-            )
-            """,
-            """
-            CREATE TABLE IF NOT EXISTS expert_searches (
-                id SERIAL PRIMARY KEY,
-                search_id INTEGER REFERENCES search_logs(id),
-                expert_id VARCHAR(255),
-                rank_position INTEGER,
-                clicked BOOLEAN DEFAULT FALSE,
-                click_timestamp TIMESTAMP,
-                session_duration INTERVAL
-            )
-            """,
-            """
-            CREATE TABLE IF NOT EXISTS query_predictions (
-                id SERIAL PRIMARY KEY,
-                partial_query TEXT NOT NULL,
-                predicted_query TEXT NOT NULL,
-                selected BOOLEAN DEFAULT FALSE,
-                timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                confidence_score FLOAT,
-                user_id VARCHAR(255)
-            )
-            """,
-            """
-            CREATE TABLE IF NOT EXISTS search_sessions (
-                id SERIAL PRIMARY KEY,
-                user_id VARCHAR(255),
-                start_timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                end_timestamp TIMESTAMP,
-                query_count INTEGER DEFAULT 1,
-                successful_searches INTEGER DEFAULT 0
-            )
-            """,
-            """
-            CREATE TABLE IF NOT EXISTS search_performance (
-                id SERIAL PRIMARY KEY,
-                timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                avg_response_time INTERVAL,
-                cache_hit_rate FLOAT,
-                error_rate FLOAT,
-                total_queries INTEGER,
-                unique_users INTEGER
-            )
-            """,
+
+            # Core table: chat_sessions
             """
             CREATE TABLE IF NOT EXISTS chat_sessions (
                 id SERIAL PRIMARY KEY,
@@ -418,6 +339,75 @@ def create_tables():
                 updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
             )
             """,
+
+            # Core table: domain_expertise_analytics
+            """
+            CREATE TABLE IF NOT EXISTS domain_expertise_analytics (
+                id SERIAL PRIMARY KEY,
+                domain_name VARCHAR(255) NOT NULL UNIQUE,
+                field_name VARCHAR(255),
+                subfield_name VARCHAR(255),
+                expert_count INTEGER DEFAULT 0,
+                match_count INTEGER DEFAULT 0,
+                last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+            """
+        ]
+
+        # Create core tables first and verify
+        for table_sql in core_tables:
+            try:
+                cur.execute(table_sql)
+                logger.info("Core table creation completed successfully")
+            except Exception as e:
+                logger.error(f"Core table creation failed: {e}")
+                raise
+
+        # Verify core tables exist
+        core_table_names = [
+            'resources_resource', 'experts_expert', 'auth_group', 'auth_permission',
+            'authors_ai', 'publications_ai', 'tags', 'search_logs', 'chat_sessions',
+            'domain_expertise_analytics'
+        ]
+        
+        for table in core_table_names:
+            cur.execute("""
+                SELECT EXISTS (
+                    SELECT FROM information_schema.tables 
+                    WHERE table_name = %s
+                );
+            """, (table,))
+            if not cur.fetchone()[0]:
+                raise Exception(f"Failed to create core table: {table}")
+            logger.info(f"Verified core table {table} exists")
+
+        # Dependent tables (with foreign key references)
+        dependent_tables = [
+            # Dependent table: publication_tags
+            """
+            CREATE TABLE IF NOT EXISTS publication_tags (
+                doi VARCHAR(255),
+                tag_id INTEGER,
+                PRIMARY KEY (doi, tag_id),
+                FOREIGN KEY (doi) REFERENCES resources_resource(doi),
+                FOREIGN KEY (tag_id) REFERENCES tags(tag_id)
+            )
+            """,
+
+            # Dependent table: expert_messages
+            """
+            CREATE TABLE IF NOT EXISTS expert_messages (
+                id SERIAL PRIMARY KEY,
+                sender_id INTEGER REFERENCES experts_expert(id),
+                receiver_id INTEGER REFERENCES experts_expert(id),
+                content TEXT,
+                draft BOOLEAN DEFAULT TRUE,
+                created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+            )
+            """,
+
+            # Dependent table: chat_interactions
             """
             CREATE TABLE IF NOT EXISTS chat_interactions (
                 id SERIAL PRIMARY KEY,
@@ -429,26 +419,205 @@ def create_tables():
                 response_time FLOAT,
                 intent_type VARCHAR(255),
                 intent_confidence FLOAT,
-                expert_matches INTEGER,
+                navigation_matches INTEGER DEFAULT 0,
+                publication_matches INTEGER DEFAULT 0,
                 error_occurred BOOLEAN DEFAULT FALSE,
                 context JSONB,
                 created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
                 updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
             )
             """,
+
+            # Dependent table: sentiment_metrics
+            """
+            CREATE TABLE IF NOT EXISTS sentiment_metrics (
+                id SERIAL PRIMARY KEY,
+                interaction_id INTEGER REFERENCES chat_interactions(id),
+                sentiment_score FLOAT,
+                emotion_labels TEXT[],
+                satisfaction_score FLOAT,
+                urgency_score FLOAT,
+                clarity_score FLOAT,
+                timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+            """,
+
+            # Dependent table: sentiment_trends
+            """
+            CREATE TABLE IF NOT EXISTS sentiment_trends (
+                id SERIAL PRIMARY KEY,
+                session_id TEXT REFERENCES chat_sessions(session_id),
+                avg_sentiment FLOAT,
+                avg_satisfaction FLOAT,
+                period_start TIMESTAMP,
+                period_end TIMESTAMP
+            )
+            """,
+
+            # Dependent table: expert_searches
+            """
+            CREATE TABLE IF NOT EXISTS expert_searches (
+                id SERIAL PRIMARY KEY,
+                search_id INTEGER REFERENCES search_logs(id),
+                expert_id VARCHAR(255),
+                rank_position INTEGER,
+                clicked BOOLEAN DEFAULT FALSE,
+                click_timestamp TIMESTAMP,
+                session_duration INTERVAL
+            )
+            """
+        ]
+
+        # Create dependent tables
+        for table_sql in dependent_tables:
+            try:
+                cur.execute(table_sql)
+                logger.info("Dependent table creation completed successfully")
+            except Exception as e:
+                logger.warning(f"Dependent table creation warning: {e}")
+                continue
+
+        # Independent tables (no foreign key relationships)
+        independent_tables = [
+            # Independent table: author_publication_ai
+            """
+            CREATE TABLE IF NOT EXISTS author_publication_ai (
+                author_id INTEGER,
+                doi VARCHAR(255)
+            )
+            """,
+
+            # Independent table: chat_chatbox
+            """
+            CREATE TABLE IF NOT EXISTS chat_chatbox (
+                id SERIAL PRIMARY KEY,
+                created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+                expert_from_id INTEGER,
+                expert_to_id INTEGER,
+                name VARCHAR(200)
+            )
+            """,
+
+            # Independent table: chat_chatboxmessage
+            """
+            CREATE TABLE IF NOT EXISTS chat_chatboxmessage (
+                id SERIAL PRIMARY KEY,
+                message TEXT,
+                read BOOLEAN DEFAULT FALSE,
+                created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+                expert_from_id INTEGER,
+                expert_to_id INTEGER,
+                chatbox_id INTEGER
+            )
+            """,
+
+            # Independent table: expertise_categories
+            """
+            CREATE TABLE IF NOT EXISTS expertise_categories (
+                id SERIAL PRIMARY KEY,
+                expert_orcid TEXT,
+                original_term TEXT,
+                domain TEXT,
+                field TEXT,
+                subfield TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+            """,
+
+            # Independent table: roles_role
+            """
+            CREATE TABLE IF NOT EXISTS roles_role (
+                id SERIAL PRIMARY KEY,
+                name VARCHAR(255),
+                description VARCHAR(255),
+                active BOOLEAN DEFAULT TRUE,
+                permissions JSONB,
+                created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+                default_expert_role BOOLEAN DEFAULT FALSE
+            )
+            """,
+
+            # Independent table: query_history_ai
+            """
+            CREATE TABLE IF NOT EXISTS query_history_ai (
+                query_id SERIAL PRIMARY KEY,
+                query TEXT,
+                timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                result_count INTEGER,
+                search_type VARCHAR(50),
+                user_id TEXT
+            )
+            """,
+
+            # Independent table: term_frequencies
+            """
+            CREATE TABLE IF NOT EXISTS term_frequencies (
+                term VARCHAR(255) PRIMARY KEY,
+                frequency INTEGER DEFAULT 1,
+                expert_id INTEGER,
+                last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+            """,
+
+            # Independent table: query_predictions
+            """
+            CREATE TABLE IF NOT EXISTS query_predictions (
+                id SERIAL PRIMARY KEY,
+                partial_query TEXT NOT NULL,
+                predicted_query TEXT NOT NULL,
+                selected BOOLEAN DEFAULT FALSE,
+                timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                confidence_score FLOAT,
+                user_id VARCHAR(255)
+            )
+            """,
+
+            # Independent table: search_sessions
+            """
+            CREATE TABLE IF NOT EXISTS search_sessions (
+                id SERIAL PRIMARY KEY,
+                user_id VARCHAR(255),
+                start_timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                end_timestamp TIMESTAMP,
+                query_count INTEGER DEFAULT 1,
+                successful_searches INTEGER DEFAULT 0
+            )
+            """,
+
+            # Independent table: search_performance
+            """
+            CREATE TABLE IF NOT EXISTS search_performance (
+                id SERIAL PRIMARY KEY,
+                timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                avg_response_time INTERVAL,
+                cache_hit_rate FLOAT,
+                error_rate FLOAT,
+                total_queries INTEGER,
+                unique_users INTEGER
+            )
+            """,
+
+            # Independent table: chat_analytics
             """
             CREATE TABLE IF NOT EXISTS chat_analytics (
                 id SERIAL PRIMARY KEY,
-                interaction_id INTEGER REFERENCES chat_interactions(id),
-                expert_id VARCHAR(255),
+                interaction_id INTEGER,
+                content_id VARCHAR(255),
+                content_type VARCHAR(50),
                 similarity_score FLOAT,
                 rank_position INTEGER,
                 clicked BOOLEAN DEFAULT FALSE,
                 timestamp TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
                 created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-                updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+                updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+                CONSTRAINT valid_content_type CHECK (content_type IN ('navigation', 'publication'))
             )
             """,
+
+            # Independent table: expert_matching_logs
             """
             CREATE TABLE IF NOT EXISTS expert_matching_logs (
                 id SERIAL PRIMARY KEY,
@@ -462,17 +631,8 @@ def create_tables():
                 successful BOOLEAN DEFAULT TRUE
             )
             """,
-            """
-            CREATE TABLE IF NOT EXISTS domain_expertise_analytics (
-                id SERIAL PRIMARY KEY,
-                domain_name VARCHAR(255) NOT NULL UNIQUE,
-                field_name VARCHAR(255),
-                subfield_name VARCHAR(255),
-                expert_count INTEGER DEFAULT 0,
-                match_count INTEGER DEFAULT 0,
-                last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-            """,
+
+            # Independent table: expert_processing_logs
             """
             CREATE TABLE IF NOT EXISTS expert_processing_logs (
                 id SERIAL PRIMARY KEY,
@@ -485,28 +645,8 @@ def create_tables():
                 timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
             """,
-            """
-            CREATE TABLE IF NOT EXISTS sentiment_metrics (
-                id SERIAL PRIMARY KEY,
-                interaction_id INTEGER REFERENCES chat_interactions(id),
-                sentiment_score FLOAT,
-                emotion_labels TEXT[],
-                satisfaction_score FLOAT,
-                urgency_score FLOAT,
-                clarity_score FLOAT,
-                timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-            """,
-            """
-            CREATE TABLE IF NOT EXISTS sentiment_trends (
-                id SERIAL PRIMARY KEY,
-                session_id TEXT REFERENCES chat_sessions(session_id),
-                avg_sentiment FLOAT,
-                avg_satisfaction FLOAT,
-                period_start TIMESTAMP,
-                period_end TIMESTAMP
-            )
-            """,
+
+            # Independent table: expert_summary_logs
             """
             CREATE TABLE IF NOT EXISTS expert_summary_logs (
                 id SERIAL PRIMARY KEY,
@@ -518,15 +658,8 @@ def create_tables():
                 timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
             """,
-            """
-            CREATE TABLE IF NOT EXISTS publication_tags (
-                doi VARCHAR(255),
-                tag_id INTEGER,
-                PRIMARY KEY (doi, tag_id),
-                FOREIGN KEY (doi) REFERENCES resources_resource(doi),
-                FOREIGN KEY (tag_id) REFERENCES tags(tag_id)
-            )
-            """,
+
+            # Independent table: collaboration_history
             """
             CREATE TABLE IF NOT EXISTS collaboration_history (
                 id SERIAL PRIMARY KEY,
@@ -537,80 +670,20 @@ def create_tables():
                 result_type VARCHAR(50),
                 timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
-            """,
-            """
-            DO $$
-            BEGIN
-                IF NOT EXISTS (
-                    SELECT 1 
-                    FROM information_schema.columns 
-                    WHERE table_name='experts_expert' AND column_name='contact_details'
-                ) THEN
-                    ALTER TABLE experts_expert ADD COLUMN contact_details VARCHAR(255);
-                END IF;
-            END $$;
             """
         ]
 
-        # Create each table in a separate transaction
-        for table_sql in table_statements:
+        # Create independent tables
+        for table_sql in independent_tables:
             try:
                 cur.execute(table_sql)
-                logger.info("Table creation/verification completed successfully")
+                logger.info("Independent table creation completed successfully")
             except Exception as e:
-                logger.warning(f"Table creation warning: {e}")
+                logger.warning(f"Independent table creation warning: {e}")
                 continue
 
-        # Add type check and correction for shared_domains
-        try:
-            # Check if the column exists and get its type
-            cur.execute("""
-                SELECT data_type 
-                FROM information_schema.columns 
-                WHERE table_name = 'expert_matching_logs' 
-                AND column_name = 'shared_domains';
-            """)
-            current_type = cur.fetchone()
-            
-            if current_type and current_type[0].lower() == 'integer':
-                # Drop dependent view first
-                cur.execute("DROP VIEW IF EXISTS expert_matching_metrics CASCADE;")
-                
-                # Alter the column type
-                cur.execute("""
-                    ALTER TABLE expert_matching_logs 
-                    ALTER COLUMN shared_domains TYPE JSONB 
-                    USING CASE 
-                        WHEN shared_domains IS NULL THEN '[]'::jsonb
-                        ELSE jsonb_build_array(shared_domains::text)
-                    END;
-                """)
-                logger.info("Successfully altered shared_domains column to JSONB type")
-        except Exception as e:
-            logger.warning(f"Column alteration warning for expert_matching_logs.shared_domains: {e}")
-
-        # Add unique constraint to domain_expertise_analytics if it doesn't exist
-        try:
-            cur.execute("""
-                DO $$
-                BEGIN
-                    IF NOT EXISTS (
-                        SELECT 1
-                        FROM pg_constraint
-                        WHERE conname = 'domain_expertise_analytics_domain_name_key'
-                    ) THEN
-                        ALTER TABLE domain_expertise_analytics
-                        ADD CONSTRAINT domain_expertise_analytics_domain_name_key
-                        UNIQUE (domain_name);
-                    END IF;
-                END $$;
-            """)
-            logger.info("Successfully added unique constraint to domain_expertise_analytics.domain_name")
-        except Exception as e:
-            logger.warning(f"Constraint addition warning for domain_expertise_analytics: {e}")
-
-        # Define all index creation statements
-        index_statements = [
+        # Create all indexes
+        indexes = [
             "CREATE INDEX IF NOT EXISTS idx_experts_name ON experts_expert (first_name, last_name)",
             "CREATE INDEX IF NOT EXISTS idx_query_history_timestamp ON query_history_ai (timestamp DESC)",
             "CREATE INDEX IF NOT EXISTS idx_query_history_user ON query_history_ai (user_id)",
@@ -629,7 +702,6 @@ def create_tables():
             "CREATE INDEX IF NOT EXISTS idx_chat_interactions_session ON chat_interactions(session_id)",
             "CREATE INDEX IF NOT EXISTS idx_chat_interactions_timestamp ON chat_interactions(timestamp)",
             "CREATE INDEX IF NOT EXISTS idx_chat_analytics_interaction ON chat_analytics(interaction_id)",
-            "CREATE INDEX IF NOT EXISTS idx_chat_analytics_expert ON chat_analytics(expert_id)",
             "CREATE INDEX IF NOT EXISTS idx_matching_expert_id ON expert_matching_logs(expert_id)",
             "CREATE INDEX IF NOT EXISTS idx_matching_matched_expert ON expert_matching_logs(matched_expert_id)",
             "CREATE INDEX IF NOT EXISTS idx_domain_expertise_name ON domain_expertise_analytics(domain_name)",
@@ -646,29 +718,23 @@ def create_tables():
             "CREATE INDEX IF NOT EXISTS idx_sentiment_trends_period ON sentiment_trends(period_start, period_end)",
             "CREATE INDEX IF NOT EXISTS idx_sentiment_trends_sentiment ON sentiment_trends(avg_sentiment)",
             "CREATE INDEX IF NOT EXISTS idx_resources_source ON resources_resource(source)",
-            "CREATE INDEX IF NOT EXISTS idx_tags_name ON tags (tag_name)",
-            "CREATE INDEX IF NOT EXISTS idx_tags_type ON tags (tag_type)",
-            "CREATE INDEX IF NOT EXISTS idx_publication_tags_doi ON publication_tags (doi)",
-            "CREATE INDEX IF NOT EXISTS idx_publication_tags_tag ON publication_tags (tag_id)",
             "CREATE INDEX IF NOT EXISTS idx_tags_name_type ON tags (tag_name, tag_type)",
             "CREATE INDEX IF NOT EXISTS idx_tags_metadata ON tags USING gin(additional_metadata)",
-            "DROP INDEX IF EXISTS idx_tags_name",
-            "DROP INDEX IF EXISTS idx_tags_type"
-
-
+            "CREATE INDEX IF NOT EXISTS idx_publication_tags_doi ON publication_tags (doi)",
+            "CREATE INDEX IF NOT EXISTS idx_publication_tags_tag ON publication_tags (tag_id)"
         ]
 
-        # Create each index in a separate transaction
-        for index_sql in index_statements:
+        # Create indexes
+        for index_sql in indexes:
             try:
                 cur.execute(index_sql)
-                logger.info("Index creation/verification completed successfully")
+                logger.info("Index creation completed successfully")
             except Exception as e:
                 logger.warning(f"Index creation warning: {e}")
                 continue
 
-        # Create views in separate transactions
-        view_statements = [
+        # Create views
+        views = [
             """
             CREATE OR REPLACE VIEW daily_search_metrics AS
             SELECT 
@@ -687,7 +753,7 @@ def create_tables():
                 AVG(sm.sentiment_score) as avg_sentiment,
                 AVG(sm.satisfaction_score) as avg_satisfaction,
                 AVG(sm.urgency_score) as avg_urgency,
-                AVG(sm.clarity_score) as avg_clarity,
+                AVG(sm.clarity_score) as avg_clarity, 
                 COUNT(*) as total_interactions,
                 array_agg(DISTINCT e) as emotions
             FROM sentiment_metrics sm
@@ -718,18 +784,18 @@ def create_tables():
             """,
             """
             CREATE OR REPLACE VIEW chat_expert_matching_metrics AS
-            SELECT 
+            SELECT
                 ca.expert_id,
                 COUNT(*) as total_matches,
                 AVG(ca.similarity_score) as avg_similarity,
                 AVG(ca.rank_position) as avg_rank,
                 SUM(CASE WHEN ca.clicked THEN 1 ELSE 0 END)::FLOAT / COUNT(*) as click_through_rate
-            FROM chat_analytics ca
+            FROM chat_analytics ca 
             GROUP BY ca.expert_id
             """,
             """
             CREATE OR REPLACE VIEW expert_matching_metrics AS
-            SELECT 
+            SELECT
                 expert_id,
                 COUNT(*) as total_matches,
                 AVG(similarity_score) as avg_similarity,
@@ -741,24 +807,24 @@ def create_tables():
             """,
             """
             CREATE OR REPLACE VIEW domain_matching_metrics AS
-            SELECT 
+            SELECT
                 d.domain_name,
                 d.expert_count,
                 d.match_count,
                 d.match_count::FLOAT / NULLIF(d.expert_count, 0) as match_rate,
                 COUNT(DISTINCT em.expert_id) as active_experts
             FROM domain_expertise_analytics d
-            LEFT JOIN expert_matching_logs em 
+            LEFT JOIN expert_matching_logs em
                 ON em.timestamp >= NOW() - interval '30 days'
             GROUP BY d.domain_name, d.expert_count, d.match_count
             """
         ]
 
-        # Create each view in a separate transaction
-        for view_sql in view_statements:
+        # Create views
+        for view_sql in views:
             try:
                 cur.execute(view_sql)
-                logger.info("View creation/verification completed successfully")
+                logger.info("View creation completed successfully")
             except Exception as e:
                 logger.warning(f"View creation warning: {e}")
                 continue
@@ -789,7 +855,6 @@ def create_tables():
             $$ LANGUAGE plpgsql;
         """
 
-        # Create trigger function in separate transaction
         try:
             cur.execute(trigger_function)
             logger.info("Trigger function creation completed successfully")
@@ -814,6 +879,118 @@ def create_tables():
 
     except Exception as e:
         logger.error(f"Error in database initialization: {e}")
+        return False
+    finally:
+        cur.close()
+        conn.close()
+def verify_database_setup():
+    """Verify that all required database objects exist."""
+    with get_db_cursor() as (cur, conn):
+        # Check core tables
+        required_tables = [
+            'resources_resource',
+            'tags',
+            'experts_expert',
+            'publication_tags'
+        ]
+        
+        for table in required_tables:
+            if not verify_table_exists(cur, table):
+                raise Exception(f"Required table {table} does not exist")
+            
+        # Check indexes
+        cur.execute("""
+            SELECT indexname 
+            FROM pg_indexes 
+            WHERE tablename = 'resources_resource'
+        """)
+        indexes = [row[0] for row in cur.fetchall()]
+        if 'idx_resources_source' not in indexes:
+            raise Exception("Required index idx_resources_source does not exist")
+            
+        logger.info("Database verification completed successfully")
+        return True
+def create_airflow_tables():
+    """Create Airflow-specific tables."""
+    conn = get_db_connection()
+    conn.autocommit = True
+    cur = conn.cursor()
+    try:
+        # Create Airflow schema
+        cur.execute("CREATE SCHEMA IF NOT EXISTS airflow;")
+        
+        # Create base tables for Airflow
+        airflow_tables = [
+            """
+            CREATE TABLE IF NOT EXISTS airflow.dag (
+                dag_id VARCHAR(250) NOT NULL PRIMARY KEY,
+                is_paused BOOLEAN,
+                is_active BOOLEAN,
+                last_scheduler_run TIMESTAMP WITH TIME ZONE,
+                last_pickled TIMESTAMP WITH TIME ZONE,
+                last_expired TIMESTAMP WITH TIME ZONE,
+                scheduler_lock BOOLEAN,
+                pickle_id INTEGER,
+                fileloc VARCHAR(2000),
+                owners VARCHAR(2000),
+                description TEXT,
+                default_view VARCHAR(25),
+                schedule_interval TEXT,
+                root_dag_id VARCHAR(250)
+            )
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS airflow.dag_run (
+                id SERIAL PRIMARY KEY,
+                dag_id VARCHAR(250),
+                execution_date TIMESTAMP WITH TIME ZONE,
+                state VARCHAR(50),
+                run_id VARCHAR(250),
+                external_trigger BOOLEAN,
+                conf JSON,
+                end_date TIMESTAMP WITH TIME ZONE,
+                start_date TIMESTAMP WITH TIME ZONE,
+                UNIQUE (dag_id, execution_date)
+            )
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS airflow.task_instance (
+                task_id VARCHAR(250),
+                dag_id VARCHAR(250),
+                execution_date TIMESTAMP WITH TIME ZONE,
+                start_date TIMESTAMP WITH TIME ZONE,
+                end_date TIMESTAMP WITH TIME ZONE,
+                duration INTERVAL,
+                state VARCHAR(20),
+                try_number INTEGER,
+                hostname VARCHAR(1000),
+                unixname VARCHAR(1000),
+                job_id INTEGER,
+                pool VARCHAR(256),
+                queue VARCHAR(256),
+                priority_weight INTEGER,
+                operator VARCHAR(1000),
+                queued_dttm TIMESTAMP WITH TIME ZONE,
+                pid INTEGER,
+                max_tries INTEGER,
+                PRIMARY KEY (task_id, dag_id, execution_date)
+            )
+            """
+        ]
+
+        for table_sql in airflow_tables:
+            try:
+                cur.execute(table_sql)
+                logger.info("Airflow table creation completed successfully")
+            except Exception as e:
+                logger.warning(f"Airflow table creation warning: {e}")
+                continue
+
+        logger.info("All Airflow database objects created/verified successfully")
+        return True
+
+    except Exception as e:
+        logger.error(f"Error in Airflow database initialization: {e}")
         return False
     finally:
         cur.close()
@@ -937,6 +1114,15 @@ def load_initial_experts(expertise_csv: str):
 
 
 if __name__ == "__main__":
-    create_database_if_not_exists()
-    create_tables()
-    fix_experts_table()
+    try:
+        create_database_if_not_exists()
+        if not create_tables():
+            raise Exception("Failed to create tables")
+        if not fix_experts_table():
+            raise Exception("Failed to fix experts table")
+        if not create_airflow_tables():
+            raise Exception("Failed to create Airflow tables")
+        logger.info("Database initialization completed successfully")
+    except Exception as e:
+        logger.error(f"Database initialization failed: {e}")
+        raise
