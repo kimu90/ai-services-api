@@ -85,39 +85,82 @@ class DatabaseManager:
             logger.error(f"Error adding expert {first_name} {last_name}: {e}")
             raise
 
-    def add_publication(
-        self, 
-        doi: str, 
-        title: str, 
-        abstract: str, 
-        summary: str, 
-        source: str = 'openalex'  # Add source parameter with explicit default
-    ) -> None:
-        """Add or update a publication in the database with source tracking."""
+    # In DatabaseManager class:
+    def add_publication(self, title: str, abstract: str, summary: str, source: str = 'openalex', 
+                    doi: Optional[str] = None, **metadata) -> None:
+        """Add or update a publication in the database."""
         try:
-            # Check if the publication already exists
-            existing_publication = self.execute("""
-                SELECT doi FROM resources_resource WHERE doi = %s
-            """, (doi,))
+            if doi:
+                # If DOI exists, use it as primary identifier
+                existing = self.execute("""
+                    SELECT doi FROM resources_resource WHERE doi = %s
+                """, (doi,))
+            else:
+                # If no DOI, check by title
+                existing = self.execute("""
+                    SELECT doi FROM resources_resource WHERE title = %s
+                """, (title,))
 
-            if existing_publication:  # If publication exists
-                # Update the existing publication with source
-                self.execute("""
+            # Build the complete publication data
+            publication_data = {
+                'doi': doi,
+                'title': title,
+                'abstract': abstract,
+                'summary': summary,
+                'authors': metadata.get('authors', []),
+                'description': metadata.get('description', abstract),
+                'expert_id': metadata.get('expert_id'),
+                'type': metadata.get('type', 'unknown'),
+                'subtitles': metadata.get('subtitles', '{}'),
+                'publishers': metadata.get('publishers', '{}'),
+                'collection': metadata.get('collection', 'default'),
+                'date_issue': metadata.get('date_issue'),
+                'citation': metadata.get('citation'),
+                'language': metadata.get('language', 'en'),
+                'identifiers': metadata.get('identifiers', '{}'),
+                'source': source
+            }
+
+            if existing:
+                # Update existing publication
+                update_query = """
                     UPDATE resources_resource
-                    SET title = %s,
-                        abstract = %s,
-                        summary = %s,
-                        source = %s
-                    WHERE doi = %s
-                """, (title, abstract, summary, source, doi))
+                    SET title = %(title)s,
+                        abstract = %(abstract)s,
+                        summary = %(summary)s,
+                        authors = %(authors)s,
+                        description = %(description)s,
+                        expert_id = %(expert_id)s,
+                        type = %(type)s,
+                        subtitles = %(subtitles)s,
+                        publishers = %(publishers)s,
+                        collection = %(collection)s,
+                        date_issue = %(date_issue)s,
+                        citation = %(citation)s,
+                        language = %(language)s,
+                        identifiers = %(identifiers)s,
+                        source = %(source)s
+                    WHERE {}
+                """.format('doi = %(doi)s' if doi else 'title = %(title)s')
+                
+                self.execute(update_query, publication_data)
                 logger.info(f"Updated publication: {title} (Source: {source})")
             else:
-                # Insert a new publication with source
+                # Insert new publication
                 self.execute("""
-                    INSERT INTO resources_resource (doi, title, abstract, summary, source)
-                    VALUES (%s, %s, %s, %s, %s)
-                """, (doi, title, abstract, summary, source))
+                    INSERT INTO resources_resource 
+                    (doi, title, abstract, summary, authors, description,
+                    expert_id, type, subtitles, publishers, collection,
+                    date_issue, citation, language, identifiers, source)
+                    VALUES (
+                        %(doi)s, %(title)s, %(abstract)s, %(summary)s, %(authors)s,
+                        %(description)s, %(expert_id)s, %(type)s, %(subtitles)s,
+                        %(publishers)s, %(collection)s, %(date_issue)s, %(citation)s,
+                        %(language)s, %(identifiers)s, %(source)s
+                    )
+                """, publication_data)
                 logger.info(f"Added publication: {title} (Source: {source})")
+
         except Exception as e:
             logger.error(f"Error adding/updating publication: {e}")
             raise
@@ -247,74 +290,80 @@ class DatabaseManager:
         except Exception as e:
             logger.error(f"Error getting user queries: {e}")
             return []
-    def add_tag(self, tag_name: str, tag_type: str = 'concept') -> int:
+    def add_tag(self, tag_info: Dict) -> int:
         """
         Add a tag to the database or return existing tag ID.
         
         Args:
-            tag_name (str): Name of the tag.
-            tag_type (str, optional): Type of the tag. Defaults to 'concept'.
+            tag_info: Dictionary containing:
+                - name: Name of the tag
+                - tag_type: Type of tag (author/domain)
+                - additional_metadata: JSON metadata for the tag
         
         Returns:
-            int: ID of the added or existing tag.
+            int: ID of the added or existing tag
         """
         try:
             # First, check if the tag already exists
             result = self.execute("""
-                SELECT tag_id FROM tags WHERE tag_name = %s
-            """, (tag_name,))
+                SELECT tag_id FROM tags 
+                WHERE tag_name = %s AND tag_type = %s
+            """, (tag_info['name'], tag_info['tag_type']))
             
             if result:
-                # Tag already exists, return its ID
                 return result[0][0]
             
             # Insert new tag
             result = self.execute("""
-                INSERT INTO tags (tag_name, tag_type) 
-                VALUES (%s, %s)
+                INSERT INTO tags (tag_name, tag_type, additional_metadata) 
+                VALUES (%s, %s, %s)
                 RETURNING tag_id
-            """, (tag_name, tag_type))
+            """, (
+                tag_info['name'],
+                tag_info['tag_type'],
+                tag_info.get('additional_metadata', '{}')
+            ))
             
             if result:
                 tag_id = result[0][0]
-                logger.info(f"Added new tag: {tag_name}")
+                logger.info(f"Added new tag: {tag_info['name']} (type: {tag_info['tag_type']})")
                 return tag_id
             
-            raise ValueError(f"Failed to add tag: {tag_name}")
+            raise ValueError(f"Failed to add tag: {tag_info['name']}")
         
         except Exception as e:
-            logger.error(f"Error adding tag {tag_name}: {e}")
+            logger.error(f"Error adding tag {tag_info}: {e}")
             raise
-
-    def link_publication_tag(self, doi: str, tag_id: int) -> None:
+    def link_publication_tag(self, identifier: str, tag_id: int) -> None:
         """
-        Link a publication with a tag.
+        Link a publication with a tag using either DOI or title.
         
         Args:
-            doi (str): DOI of the publication.
-            tag_id (int): ID of the tag.
+            identifier: Either DOI or title of the publication
+            tag_id: ID of the tag
         """
         try:
             # Check if the link already exists
             result = self.execute("""
                 SELECT 1 FROM publication_tags 
-                WHERE doi = %s AND tag_id = %s
-            """, (doi, tag_id))
+                WHERE (doi = %s OR title = %s) AND tag_id = %s
+            """, (identifier, identifier, tag_id))
             
             if result:
-                # Link already exists
                 return
             
             # Create new link
             self.execute("""
-                INSERT INTO publication_tags (doi, tag_id)
-                VALUES (%s, %s)
-            """, (doi, tag_id))
+                INSERT INTO publication_tags (doi, title, tag_id)
+                VALUES (%s, %s, %s)
+            """, (identifier if '10.' in identifier else None,  # Assume it's a DOI if it starts with '10.'
+                identifier if '10.' not in identifier else None,
+                tag_id))
             
-            logger.info(f"Linked publication {doi} with tag {tag_id}")
+            logger.info(f"Linked publication {identifier} with tag {tag_id}")
         
         except Exception as e:
-            logger.error(f"Error linking publication {doi} with tag {tag_id}: {e}")
+            logger.error(f"Error linking publication {identifier} with tag {tag_id}: {e}")
             raise
     def add_query(self, query: str, result_count: int, search_type: str = 'semantic', 
                  user_id: Optional[str] = None) -> Optional[int]:
@@ -375,35 +424,36 @@ class DatabaseManager:
             logger.error(f"Error adding author tag {author_name}: {e}")
             raise
 
-    def link_author_publication(self, author_id: int, doi: str) -> None:
+    def link_author_publication(self, author_id: int, identifier: str) -> None:
         """
-        Link an author (tag) with a publication.
+        Link an author with a publication using either DOI or title.
         
         Args:
-            author_id (int): ID of the author tag.
-            doi (str): DOI of the publication.
+            author_id: ID of the author tag
+            identifier: Either DOI or title of the publication
         """
         try:
             # Check if the link already exists
             result = self.execute("""
                 SELECT 1 FROM publication_tags 
-                WHERE doi = %s AND tag_id = %s
-            """, (doi, author_id))
+                WHERE (doi = %s OR title = %s) AND tag_id = %s
+            """, (identifier, identifier, author_id))
             
             if result:
-                # Link already exists
                 return
             
             # Create new link
             self.execute("""
-                INSERT INTO publication_tags (doi, tag_id)
-                VALUES (%s, %s)
-            """, (doi, author_id))
+                INSERT INTO publication_tags (doi, title, tag_id)
+                VALUES (%s, %s, %s)
+            """, (identifier if '10.' in identifier else None,  # Assume it's a DOI if it starts with '10.'
+                identifier if '10.' not in identifier else None,
+                author_id))
             
-            logger.info(f"Linked publication {doi} with author tag {author_id}")
+            logger.info(f"Linked publication {identifier} with author tag {author_id}")
         
         except Exception as e:
-            logger.error(f"Error linking publication {doi} with author tag {author_id}: {e}")
+            logger.error(f"Error linking publication {identifier} with author tag {author_id}: {e}")
             raise
     def close(self):
         """Close database connection."""

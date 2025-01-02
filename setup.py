@@ -121,6 +121,9 @@ async def process_data(args):
             summarizer = TextSummarizer()
             pub_processor = PublicationProcessor(processor.db, summarizer)
             
+            # Limit the number of publications processed to 10
+            max_publications = 10
+            
             # Process publications from different sources
             sources = [
                 ('OpenAlex', processor, 'openalex'),
@@ -135,17 +138,25 @@ async def process_data(args):
                     logger.info(f"Processing {name} publications...")
                     
                     if source_name in ['openalex', 'orcid']:
-                        # For OpenAlex and ORCID, use their process_publications method
+                        # For OpenAlex and ORCID, process up to the limit
                         await source_processor.process_publications(pub_processor, source=source_name)
+                        for i, publication in enumerate(publications):
+                            if i >= max_publications:
+                                break
+                            pub_processor.process_single_work(publication, source=source_name)
                     elif source_name == 'knowhub':
                         # Knowhub specific processing
-                        knowhub_publications = source_processor.fetch_publications(limit=10)
-                        for publication in knowhub_publications:
+                        knowhub_publications = source_processor.fetch_publications(limit=max_publications)
+                        for i, publication in enumerate(knowhub_publications):
+                            if i >= max_publications:
+                                break
                             pub_processor.process_single_work(publication, source=source_name)
                     elif source_name == 'website':
                         # Website scraper processing
-                        website_publications = source_processor.fetch_content(limit=10)
-                        for publication in website_publications:
+                        website_publications = source_processor.fetch_content(limit=max_publications)
+                        for i, publication in enumerate(website_publications):
+                            if i >= max_publications:
+                                break
                             pub_dict = {
                                 'title': publication.title,
                                 'authors': publication.authors,
@@ -160,10 +171,12 @@ async def process_data(args):
                         # Research Nexus processing with error handling
                         try:
                             logger.info("Fetching publications from Research Nexus...")
-                            research_nexus_publications = source_processor.fetch_content(limit=10)
+                            research_nexus_publications = source_processor.fetch_content(limit=max_publications)
                             
                             if research_nexus_publications:
-                                for publication in research_nexus_publications:
+                                for i, publication in enumerate(research_nexus_publications):
+                                    if i >= max_publications:
+                                        break
                                     try:
                                         pub_processor.process_single_work(publication, source=source_name)
                                     except Exception as e:

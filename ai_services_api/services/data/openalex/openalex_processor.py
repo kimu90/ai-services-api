@@ -8,7 +8,7 @@ import pandas as pd
 import psycopg2
 from urllib.parse import urlparse
 import json
-
+import json  # Add at the top of both files
 from ai_services_api.services.data.openalex.database_manager import DatabaseManager
 from ai_services_api.services.data.openalex.publication_processor import PublicationProcessor
 from ai_services_api.services.data.openalex.ai_summarizer import TextSummarizer
@@ -354,7 +354,7 @@ class OpenAlexProcessor:
 
     async def process_publications(self, pub_processor: PublicationProcessor, source: str = 'openalex'):
         try:
-            # Get all experts with ORCID, excluding those with "Unknown" first or last name
+            # Get all experts with ORCID
             experts = self.db.execute("""
                 SELECT id, first_name, last_name, orcid
                 FROM experts_expert
@@ -366,7 +366,7 @@ class OpenAlexProcessor:
                 return
             
             publication_count = 0
-            max_publications = 10  # Changed to 10 total publications
+            max_publications = 10  # Total limit
             
             logger.info(f"Processing publications for {len(experts)} experts")
 
@@ -382,30 +382,40 @@ class OpenAlexProcessor:
                         
                         for work in publications:
                             try:
-                                if pub_processor.process_single_work(work, source=source):
-                                    publication_count += 1
-                                    logger.info(
-                                        f"Processed publication {publication_count}/{max_publications}: "
-                                        f"{work.get('title', 'Unknown Title')}"
-                                    )
-                                
                                 if publication_count >= max_publications:
                                     break
+
+                                # Start transaction for this work
+                                self.db.execute("BEGIN")
+                                try:
+                                    if pub_processor.process_single_work(work, source=source):
+                                        publication_count += 1
+                                        logger.info(
+                                            f"Processed publication {publication_count}/{max_publications}: "
+                                            f"{work.get('title', 'Unknown Title')}"
+                                        )
+                                        self.db.execute("COMMIT")
+                                    else:
+                                        self.db.execute("ROLLBACK")
+                                    
+                                except Exception as e:
+                                    self.db.execute("ROLLBACK")
+                                    logger.error(f"Error processing work, transaction rolled back: {e}")
+                                    continue
                                     
                             except Exception as e:
                                 logger.error(f"Error processing work: {e}")
                                 continue
-                                    
+                                        
                     except Exception as e:
                         logger.error(f"Error processing publications for {first_name} {last_name}: {e}")
                         continue
-                            
-                logger.info(f"Publications processing completed. Total processed: {publication_count}")
-                
+                                
+                logger.info(f"OpenAlex publications processing completed. Total processed: {publication_count}")
+                    
         except Exception as e:
             logger.error(f"Error in publications processing: {e}")
             raise
-                
     async def _fetch_expert_publications(self, session: aiohttp.ClientSession, orcid: str,
                                        per_page: int = 5) -> List[Dict[str, Any]]:
         """Fetch publications for an expert from OpenAlex."""

@@ -1,4 +1,5 @@
 import logging
+import json  # Add at the top of both files
 from typing import Dict, Optional, List, Any
 from ai_services_api.services.data.openalex.database_manager import DatabaseManager
 from ai_services_api.services.data.openalex.ai_summarizer import TextSummarizer
@@ -17,20 +18,33 @@ logger = logging.getLogger(__name__)
 
 class PublicationProcessor:
     def __init__(self, db: DatabaseManager, summarizer: TextSummarizer):
-        """
-        Initialize PublicationProcessor.
-        
-        Args:
-            db: Database manager instance
-            summarizer: Text summarizer instance
-        """
+        """Initialize PublicationProcessor."""
         self.db = db
         self.summarizer = summarizer
         self._setup_database_indexes()
-
     def _setup_database_indexes(self) -> None:
-        """Create necessary database indexes if they don't exist."""
+        """Create necessary database indexes and tables if they don't exist."""
         try:
+            # First create tables
+            tables = [
+                """
+                CREATE TABLE IF NOT EXISTS publication_tags (
+                    doi VARCHAR(255),
+                    title TEXT,
+                    tag_id INTEGER,
+                    PRIMARY KEY (doi, tag_id)
+                )
+                """
+            ]
+            
+            for table_sql in tables:
+                try:
+                    self.db.execute(table_sql)
+                except Exception as e:
+                    logger.error(f"Error creating table: {e}")
+                    raise
+
+            # Then create indexes
             indexes = [
                 """
                 CREATE INDEX IF NOT EXISTS idx_resources_doi 
@@ -52,7 +66,8 @@ class PublicationProcessor:
             
             for index_sql in indexes:
                 self.db.execute(index_sql)
-            logger.info("Database indexes verified/created successfully")
+                
+            logger.info("Database tables and indexes verified/created successfully")
         except Exception as e:
             logger.error(f"Error setting up database indexes: {e}")
 
@@ -79,102 +94,109 @@ class PublicationProcessor:
             logger.error(f"Error checking DOI existence: {e}")
             return False
 
-    def _clean_and_validate_work(self, work: Dict) -> tuple[Optional[str], Optional[str]]:
+    def _check_publication_exists(self, title: str, doi: Optional[str] = None) -> tuple[bool, Optional[str]]:
         """
-        Clean and validate work data.
+        Check if publication exists and get its summary.
         
         Args:
-            work: Publication work dictionary
+            title: Publication title
+            doi: Optional DOI
             
         Returns:
-            tuple: (doi, title) if valid, (None, None) if invalid
+            tuple: (exists, summary)
         """
         try:
+            if doi:
+                result = self.db.execute("""
+                    SELECT EXISTS(SELECT 1 FROM resources_resource WHERE doi = %s),
+                           (SELECT summary FROM resources_resource WHERE doi = %s)
+                    """, (doi, doi))
+                if result and result[0][0]:
+                    return True, result[0][1]
+
+            # If no DOI or DOI not found, check by title
+            result = self.db.execute("""
+                SELECT EXISTS(SELECT 1 FROM resources_resource WHERE title = %s),
+                       (SELECT summary FROM resources_resource WHERE title = %s)
+                """, (title, title))
+            if result:
+                return result[0][0], result[0][1]
+            return False, None
+        except Exception as e:
+            logger.error(f"Error checking publication existence: {e}")
+            return False, None
+
+    def _clean_and_validate_work(self, work: Dict) -> tuple[Optional[str], Optional[str]]:
+        """Clean and validate work data."""
+        try:
             doi = safe_str(work.get('doi'))
-            if not doi or doi == "N/A":
-                logger.warning("Invalid DOI")
-                return None, None
-
             title = safe_str(work.get('title'))
+            
             if not title:
-                logger.warning(f"Invalid title for DOI: {doi}")
+                logger.warning("Invalid title")
                 return None, None
 
-            return doi, title
+            # DOI can be None, but title must exist
+            return doi if doi and doi != "N/A" else None, title
+            
         except Exception as e:
             logger.error(f"Error in work validation: {e}")
             return None, None
 
     def process_single_work(self, work: Dict, source: str = 'openalex') -> bool:
-        """
-        Process a single publication work.
-        
-        Args:
-            work: Publication work dictionary
-            source: Source of the publication (default: 'openalex')
-            
-        Returns:
-            bool: True if processing successful, False otherwise
-        """
+        """Process a single publication work."""
+        if not work:
+            return False
+
         try:
             # Clean and validate work
             doi, title = self._clean_and_validate_work(work)
-            if not doi or not title:
+            if not title:  # Title is required, DOI is optional
                 return False
 
-            # Check for existing DOI
-            if self._doi_exists(doi):
-                logger.info(f"Publication with DOI {doi} already exists. Skipping.")
+            # Check if publication exists
+            exists, existing_summary = self._check_publication_exists(title, doi)
+            if exists and existing_summary:
+                logger.info(f"Publication already exists with summary. Skipping.")
                 return False
 
             # Process abstract
-            abstract_index = work.get('abstract_inverted_index')
-            abstract = convert_inverted_index_to_text(abstract_index)
+            abstract = work.get('abstract', '')
             if not abstract:
-                abstract = "No abstract available."
+                logger.info("No abstract available, generating description from title")
+                abstract = f"Publication about {title}"
 
             # Generate summary
-            try:
-                logger.info(f"Generating summary for: {title}")
-                summary = self.summarizer.summarize(title, abstract)
-            except Exception as e:
-                logger.error(f"Error generating summary: {e}")
-                summary = "Summary generation failed."
+            summary = None
+            if not exists or not existing_summary:
+                try:
+                    logger.info(f"Generating summary for: {title}")
+                    summary = self.summarizer.summarize(title, abstract)
+                except Exception as e:
+                    logger.error(f"Error generating summary: {e}")
+                    summary = abstract[:500]  # Fallback to truncated abstract
 
-            # Truncate texts
-            title = truncate_text(title, max_length=500)
-            abstract = truncate_text(abstract, max_length=5000)
-            summary = truncate_text(summary, max_length=1000)
+            # Use existing summary if available
+            summary = existing_summary or summary or abstract[:500]
 
-            # Extract additional metadata
+            # Extract metadata
             metadata = self._extract_metadata(work)
+            publication_data = {
+                'title': title,
+                'abstract': abstract,
+                'summary': summary,
+                'source': source,
+                'doi': doi,
+                **metadata  # This includes all the additional metadata fields
+            }
 
-            # Add publication to database with transaction
             try:
                 self.db.execute("BEGIN")
-                
                 # Add main publication record
-                self.db.add_publication(
-                    doi=doi,
-                    title=title,
-                    abstract=abstract,
-                    summary=summary,
-                    source=source,
-                    **metadata
-                )
-
-                # Process authors
-                for authorship in work.get('authorships', []):
-                    self._process_author(authorship, doi)
-
-                # Process concepts/tags
-                for concept in work.get('concepts', []):
-                    self._process_tag(concept, doi)
-
+                self.db.add_publication(**publication_data)
                 self.db.execute("COMMIT")
                 logger.info(f"Successfully processed publication: {title}")
                 return True
-
             except Exception as e:
                 self.db.execute("ROLLBACK")
                 logger.error(f"Error in database transaction: {e}")
@@ -208,47 +230,84 @@ class PublicationProcessor:
             logger.error(f"Error extracting metadata: {e}")
             return {}
 
-    def _process_author(self, authorship: Dict, doi: str) -> None:
+    def _process_authors(self, authorships: List[Dict], doi: str) -> None:
         """
-        Process a single author and link to publication.
+        Process all authors from a work and add them as author tags.
         
         Args:
-            authorship: Author information dictionary
+            authorships: List of authorship information
             doi: Publication DOI
         """
         try:
-            author = authorship.get('author', {})
-            if not author:
-                return
+            for authorship in authorships:
+                author = authorship.get('author', {})
+                if not author:
+                    continue
 
-            author_name = author.get('display_name')
-            if not author_name:
-                return
+                author_name = author.get('display_name')
+                if not author_name:
+                    continue
 
-            orcid = author.get('orcid')
-            author_identifier = author.get('id')
-            
-            # Add author with additional information
-            author_info = {
-                'name': author_name,
-                'orcid': orcid,
-                'author_identifier': author_identifier,
-                'affiliations': [
-                    aff.get('display_name') 
-                    for aff in authorship.get('institutions', [])
-                ],
-                'is_corresponding': authorship.get('is_corresponding', False)
-            }
+                tag_info = {
+                    'name': author_name,
+                    'type': 'author',
+                    'metadata': {
+                        'orcid': author.get('orcid'),
+                        'openalex_id': author.get('id'),
+                        'affiliations': [
+                            aff.get('display_name') 
+                            for aff in authorship.get('institutions', [])
+                        ],
+                        'is_corresponding': authorship.get('is_corresponding', False)
+                    }
+                }
 
-            try:
-                author_id = self.db.add_author(author_info)
-                self.db.link_author_publication(author_id, doi)
-                logger.debug(f"Processed author: {author_name} for publication {doi}")
-            except Exception as e:
-                logger.error(f"Error adding author to database: {e}")
+                try:
+                    tag_id = self.db.add_tag(tag_info)
+                    self.db.link_publication_tag(doi, tag_id)
+                    logger.debug(f"Processed author tag: {author_name}")
+                except Exception as e:
+                    logger.error(f"Error adding author tag: {e}")
 
         except Exception as e:
-            logger.error(f"Error processing author for publication {doi}: {e}")
+            logger.error(f"Error processing authors: {e}")
+
+    def _process_domains(self, work: Dict, doi: str) -> None:
+        """
+        Process domain information from work and add as domain tags.
+        
+        Args:
+            work: Work dictionary with domain information
+            doi: Publication DOI
+        """
+        try:
+            # Process topics/domains
+            for topic in work.get('topics', []):
+                # Process domain
+                domain = topic.get('domain', {}).get('display_name')
+                if domain:
+                    tag_info = {
+                        'name': domain,
+                        'type': 'domain',
+                        'metadata': {
+                            'score': topic.get('score'),
+                            'level': topic.get('level'),
+                            'field': topic.get('field', {}).get('display_name'),
+                            'subfields': [
+                                sf.get('display_name') 
+                                for sf in topic.get('subfields', [])
+                            ]
+                        }
+                    }
+                    try:
+                        tag_id = self.db.add_tag(tag_info)
+                        self.db.link_publication_tag(doi, tag_id)
+                        logger.debug(f"Processed domain tag: {domain}")
+                    except Exception as e:
+                        logger.error(f"Error adding domain tag: {e}")
+
+        except Exception as e:
+            logger.error(f"Error processing domains: {e}")
 
     def _process_tag(self, concept: Dict, doi: str) -> None:
         """

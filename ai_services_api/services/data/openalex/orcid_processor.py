@@ -4,7 +4,7 @@ import asyncio
 import aiohttp
 import requests
 from typing import List, Dict, Optional
-
+import json  # Add at the top of both files
 from ai_services_api.services.data.openalex.database_manager import DatabaseManager
 from ai_services_api.services.data.openalex.ai_summarizer import TextSummarizer
 from ai_services_api.services.data.openalex.publication_processor import PublicationProcessor
@@ -112,33 +112,51 @@ class OrcidProcessor:
         
         # Process publications for each expert
         publication_count = 0
-        max_publications = 10  # Changed to 10 total publications
+        max_publications = 10  # Maximum total publications
         
         async with aiohttp.ClientSession() as session:
             for expert in experts:
                 try:
                     if publication_count >= max_publications:
-                        logger.info("Reached maximum total publication limit")
+                        logger.info(f"Reached maximum total publication limit ({max_publications})")
                         break
                     
                     # Fetch publications for this expert
+                    logger.info(f"Fetching publications for {expert['first_name']} {expert['last_name']}")
                     publications = await self._fetch_expert_publications(
                         session, 
-                        expert['orcid']
+                        expert['orcid'],
+                        per_page=min(5, max_publications - publication_count)  # Dynamically adjust per_page
                     )
                     
-                    for work in publications:
+                    for summary in publications:
                         try:
-                            # Process publication with ORCID source
-                            if pub_processor.process_single_work(work, source=source):
-                                publication_count += 1
-                                logger.info(
-                                    f"Processed publication {publication_count}/{max_publications}: "
-                                    f"{work.get('title', 'Unknown Title')}"
-                                )
-                            
                             if publication_count >= max_publications:
                                 break
+                                
+                            # Convert ORCID work to standard format
+                            work = self._convert_orcid_to_standard_format(summary)
+                            if not work:
+                                continue
+                                
+                            # Start transaction for this work
+                            self.db.execute("BEGIN")
+                            try:
+                                # Process publication with ORCID source
+                                if pub_processor.process_single_work(work, source=source):
+                                    publication_count += 1
+                                    logger.info(
+                                        f"Processed publication {publication_count}/{max_publications}: "
+                                        f"{work.get('title', 'Unknown Title')}"
+                                    )
+                                    self.db.execute("COMMIT")
+                                else:
+                                    self.db.execute("ROLLBACK")
+                                    
+                            except Exception as e:
+                                self.db.execute("ROLLBACK")
+                                logger.error(f"Error processing work, transaction rolled back: {e}")
+                                continue
                                 
                         except Exception as e:
                             logger.error(f"Error processing work: {e}")
@@ -197,16 +215,9 @@ class OrcidProcessor:
                         # Take first work summary
                         summary = work_summaries[0]
                         
-                        # Construct work dictionary
-                        work = {
-                            'title': summary.get('title', {}).get('title', {}).get('value', 'Unknown Title'),
-                            'doi': self._get_identifier(summary, 'doi'),
-                            'abstract_inverted_index': None,  # ORCID might not have this
-                            'authorships': [],  # You might want to populate this
-                            'concepts': []  # You might want to populate this
-                        }
-                        
-                        works.append(work)
+                        # Convert to standard format
+                        if standardized_work := self._convert_orcid_to_standard_format(summary):
+                            works.append(standardized_work)
                     
                     return works
                 
@@ -220,6 +231,82 @@ class OrcidProcessor:
         except Exception as e:
             logger.error(f"Error fetching ORCID publications: {e}")
             return []
+
+    def _convert_orcid_to_standard_format(self, work_summary: Dict) -> Optional[Dict]:
+        """Convert ORCID work summary to standard format."""
+        try:
+            if not work_summary:
+                return None
+
+            # Get the title - handle different possible structures
+            title = None
+            if isinstance(work_summary.get('title'), dict):
+                title = work_summary.get('title', {}).get('title', {}).get('value')
+            elif isinstance(work_summary.get('title'), str):
+                title = work_summary.get('title')
+                
+            if not title:
+                return None
+
+            # Get publication year safely
+            pub_year = None
+            pub_date = work_summary.get('publication-date', {})
+            if isinstance(pub_date, dict):
+                year_data = pub_date.get('year', {})
+                if isinstance(year_data, dict):
+                    pub_year = int(year_data.get('value')) if year_data.get('value') else None
+                elif isinstance(year_data, str):
+                    try:
+                        pub_year = int(year_data)
+                    except (ValueError, TypeError):
+                        pub_year = None
+
+            # Extract authors safely
+            authorships = []
+            contributors = work_summary.get('contributors', {}).get('contributor', [])
+            if isinstance(contributors, list):
+                for contributor in contributors:
+                    if isinstance(contributor, dict):
+                        credit_name = contributor.get('credit-name', {})
+                        if isinstance(credit_name, dict):
+                            name = credit_name.get('value')
+                        else:
+                            name = str(credit_name) if credit_name else None
+                        
+                        if name:
+                            authorships.append({
+                                'author': {
+                                    'display_name': name,
+                                    'orcid': contributor.get('contributor-orcid', {}).get('path'),
+                                },
+                                'institutions': [],
+                                'is_corresponding': False
+                            })
+
+            # Construct work with safe fallbacks
+            work = {
+                'title': title,
+                'doi': self._get_identifier(work_summary, 'doi'),
+                'type': work_summary.get('type', 'unknown'),
+                'publication_year': pub_year,
+                'cited_by_count': 0,  # Default for ORCID
+                'language': work_summary.get('language-code', 'en'),
+                'publisher': None,
+                'journal': None,
+                'host_venue': {
+                    'display_name': work_summary.get('journal-title', {}).get('value') if isinstance(work_summary.get('journal-title'), dict) else None
+                },
+                'authorships': authorships,
+                'abstract_inverted_index': None,
+                'concepts': []
+            }
+            
+            logger.info(f"Successfully converted ORCID work: {title}")
+            return work
+
+        except Exception as e:
+            logger.error(f"Error converting ORCID work to standard format: {e}")
+            return None
 
     def _get_identifier(self, work_summary: Dict, id_type: str) -> str:
         """
