@@ -20,8 +20,8 @@ RUN pip install --upgrade pip && \
 # Copy dependency files
 COPY pyproject.toml poetry.lock ./
 
-# Install dependencies
-RUN poetry install --no-dev
+# Install dependencies (including dev dependencies for testing)
+RUN poetry install --with dev
 
 # Install additional Python packages
 RUN pip install --index-url https://download.pytorch.org/whl/cpu torch && \
@@ -64,7 +64,8 @@ RUN mkdir -p \
     /opt/airflow/dags \
     /opt/airflow/plugins \
     /opt/airflow/data \
-    /code/scripts
+    /code/scripts \
+    /code/tests
 
 # Set permissions
 RUN chown -R appuser:appgroup /code && \
@@ -89,7 +90,8 @@ RUN chmod +x /code/scripts/init-script.sh
 ENV TRANSFORMERS_CACHE=/code/cache \
     HF_HOME=/code/cache \
     AIRFLOW_HOME=/opt/airflow \
-    PYTHONPATH=/code
+    PYTHONPATH=/code \
+    TESTING=false
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
@@ -97,3 +99,6 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
 
 # Switch to non-root user
 USER appuser
+
+# Default command (can be overridden in docker-compose)
+CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]

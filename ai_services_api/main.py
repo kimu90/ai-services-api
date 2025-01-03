@@ -6,7 +6,6 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 from ai_services_api.controllers.chatbot_router import api_router as chatbot_router
 from ai_services_api.controllers.search_router import api_router as search_router
 from ai_services_api.controllers.recommendation_router import api_router as recommendation_router
-from ai_services_api.controllers.content_router import api_router as content_router
 from ai_services_api.controllers.message_router import api_router as message_router
 
 # Create the FastAPI app instance
@@ -33,7 +32,6 @@ app.add_middleware(
 app.include_router(chatbot_router, prefix="/chatbot")
 app.include_router(recommendation_router, prefix="/recommendation")
 app.include_router(search_router, prefix="/search")
-app.include_router(content_router, prefix="/content/api")
 app.include_router(message_router, prefix="/message")
 
 @app.get("/", response_class=HTMLResponse)

@@ -1,5 +1,5 @@
-from fastapi import APIRouter, HTTPException, BackgroundTasks
-from typing import List, Dict, Any
+from fastapi import APIRouter, HTTPException, BackgroundTasks, Request, Depends
+from typing import List, Dict, Any, Optional
 from pydantic import BaseModel
 import logging
 from datetime import datetime
@@ -13,6 +13,7 @@ logger = logging.getLogger(__name__)
 # Initialize ML Predictor
 ml_predictor = MLPredictor()
 
+# Response Models
 class ExpertSearchResult(BaseModel):
     id: str
     first_name: str
@@ -29,16 +30,61 @@ class ExpertSearchResult(BaseModel):
 class SearchResponse(BaseModel):
     total_results: int
     experts: List[ExpertSearchResult]
+    user_id: str
 
 class PredictionResponse(BaseModel):
     predictions: List[str]
     confidence_scores: List[float]
+    user_id: str
 
-@router.get("/experts/search/{query}")
-async def search_experts(query: str, active_only: bool = True):
+# User ID dependencies
+async def get_user_id(request: Request) -> str:
+    """Get user ID from request header for production use"""
+    user_id = request.headers.get("X-User-ID")
+    if not user_id:
+        raise HTTPException(status_code=400, detail="X-User-ID header is required")
+    return user_id
+
+async def get_test_user_id(request: Request) -> str:
+    """Get user ID from request header or use default for testing"""
+    user_id = request.headers.get("X-User-ID")
+    if not user_id:
+        user_id = "test_user_123"
+    return user_id
+
+async def process_expert_search(
+    query: str,
+    user_id: str,
+    active_only: bool = True
+) -> SearchResponse:
+    """Common expert search processing logic"""
+    db = DatabaseManager()
     try:
+        start_time = datetime.now()
         search_manager = ExpertSearchIndexManager()
+        
+        # Start search session
+        session_id = db.start_search_session(user_id)
+        
+        # Perform search
         results = search_manager.search_experts(query, k=5, active_only=active_only)
+        
+        # Record analytics
+        search_id = db.record_search_analytics(
+            query=query,
+            user_id=user_id,
+            response_time=(datetime.now() - start_time).total_seconds(),
+            result_count=len(results),
+            search_type='expert_search'
+        )
+        
+        # Record expert matches
+        for idx, result in enumerate(results):
+            db.record_expert_search(
+                search_id=search_id,
+                expert_id=result['id'],
+                rank_position=idx + 1
+            )
         
         formatted_results = [
             ExpertSearchResult(
@@ -55,12 +101,15 @@ async def search_experts(query: str, active_only: bool = True):
             for result in results
         ]
         
-        # Update ML predictor with successful query
-        ml_predictor.update(query, user_id="default")
+        # Update ML predictor
+        ml_predictor.update(query, user_id=user_id)
+        
+        db.update_search_session(session_id, successful=len(results) > 0)
         
         return SearchResponse(
             total_results=len(formatted_results),
-            experts=formatted_results
+            experts=formatted_results,
+            user_id=user_id
         )
         
     except Exception as e:
@@ -69,241 +118,78 @@ async def search_experts(query: str, active_only: bool = True):
             status_code=500,
             detail="Internal server error while searching experts"
         )
+    finally:
+        db.close()
 
-@router.get("/experts/predict/{partial_query}")
-async def predict_query(partial_query: str):
-    """Predict query completions based on partial input."""
+async def process_query_prediction(
+    partial_query: str,
+    user_id: str
+) -> PredictionResponse:
+    """Common query prediction processing logic"""
+    db = DatabaseManager()
     try:
-        predictions = ml_predictor.predict(partial_query, user_id="default")
+        # Record prediction attempt
+        cursor = db.get_cursor()
+        cursor.execute("""
+            INSERT INTO query_predictions
+            (partial_query, user_id, timestamp)
+            VALUES (%s, %s, NOW())
+            RETURNING id
+        """, (partial_query, user_id))
+        
+        predictions = ml_predictor.predict(partial_query, user_id=user_id)
         scores = [1.0 - (i * 0.1) for i in range(len(predictions))]
+        
+        db.commit()
         
         return PredictionResponse(
             predictions=predictions,
-            confidence_scores=scores
+            confidence_scores=scores,
+            user_id=user_id
         )
         
     except Exception as e:
         logger.error(f"Error predicting queries: {e}")
-        raise HTTPException(
-            status_code=500,
-            detail="Internal server error while predicting queries"
-        )
-
-@router.post("/experts/train-predictor")
-async def train_predictor(background_tasks: BackgroundTasks, queries: List[str]):
-    """Train the ML predictor with historical queries."""
-    try:
-        background_tasks.add_task(ml_predictor.train, queries, user_id="default")
-        return {"message": "Predictor training initiated"}
-    except Exception as e:
-        logger.error(f"Error training predictor: {e}")
-        raise HTTPException(
-            status_code=500,
-            detail="Error initiating predictor training"
-        )
-
-@router.get("/experts/similar/{expert_id}")
-async def find_similar_experts(expert_id: str, active_only: bool = True):
-    """Find similar experts based on an expert's ID."""
-    try:
-        search_manager = ExpertSearchIndexManager()
-        
-        expert_data = await search_manager.get_expert_text_by_id(expert_id)
-        if not expert_data:
-            raise HTTPException(
-                status_code=404,
-                detail=f"Expert with ID {expert_id} not found"
-            )
-        
-        results = search_manager.search_experts(expert_data, k=6, active_only=active_only)
-        
-        formatted_results = [
-            ExpertSearchResult(
-                id=str(result['id']),
-                first_name=result['first_name'],
-                last_name=result['last_name'],
-                designation=result['designation'],
-                theme=result['theme'],
-                unit=result['unit'],
-                contact=result['contact'],
-                is_active=result['is_active'],
-                score=result.get('score')
-            )
-            for result in results
-            if str(result['id']) != expert_id
-        ][:5]
-        
-        return SearchResponse(
-            total_results=len(formatted_results),
-            experts=formatted_results
-        )
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Error finding similar experts: {e}")
-        raise HTTPException(
-            status_code=500,
-            detail="Internal server error while finding similar experts"
-        )
-
-@router.get("/experts/{expert_id}")
-async def get_expert_details(expert_id: str):
-    try:
-        search_manager = ExpertSearchIndexManager()
-        expert_data = await search_manager.get_expert_metadata(expert_id)
-        
-        if not expert_data:
-            raise HTTPException(
-                status_code=404,
-                detail=f"Expert with ID {expert_id} not found"
-            )
-        
-        return ExpertSearchResult(
-            id=str(expert_data['id']),
-            first_name=expert_data['first_name'],
-            last_name=expert_data['last_name'],
-            designation=expert_data['designation'],
-            theme=expert_data['theme'],
-            unit=expert_data['unit'],
-            contact=expert_data['contact'],
-            is_active=expert_data['is_active']
-        )
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Error getting expert details: {e}")
-        raise HTTPException(
-            status_code=500,
-            detail="Internal server error while getting expert details"
-        )
-
-@router.get("/test/experts/search/{query}")
-async def test_search_experts(
-    query: str,
-    active_only: bool = True,
-    test_error: bool = False
-):
-    """Test endpoint for expert search with analytics tracking"""
-    db = DatabaseManager()
-    try:
-        if test_error:
-            raise Exception("Test error scenario")
-
-        start_time = datetime.now()
-        search_manager = ExpertSearchIndexManager()
-        
-        session_id = db.start_search_session("test_user")
-        results = search_manager.search_experts(query, k=5, active_only=active_only)
-        
-        search_id = db.record_search_analytics(
-            query=query,
-            user_id="test_user",
-            response_time=(datetime.now() - start_time).total_seconds(),
-            result_count=len(results),
-            search_type='test'
-        )
-        
-        for idx, result in enumerate(results):
-            db.record_expert_search(
-                search_id=search_id,
-                expert_id=result['id'],
-                rank_position=idx + 1
-            )
-        
-        db.update_search_session(session_id, successful=len(results) > 0)
-        
-        formatted_results = [
-            ExpertSearchResult(
-                id=str(result['id']),
-                first_name=result['first_name'],
-                last_name=result['last_name'],
-                designation=result['designation'],
-                theme=result['theme'],
-                unit=result['unit'],
-                contact=result['contact'],
-                is_active=result['is_active'],
-                score=result.get('score')
-            )
-            for result in results
-        ]
-        # Update ML predictor
-        ml_predictor.update(query, user_id="test_user")
-        
-        return SearchResponse(
-            total_results=len(formatted_results),
-            experts=formatted_results
-        )
-        
-    except Exception as e:
-        logger.error(f"Test Error searching experts: {e}")
         raise HTTPException(status_code=500, detail=str(e))
     finally:
         db.close()
+
+# Test endpoints
+@router.get("/test/experts/search/{query}")
+async def test_search_experts(
+    query: str,
+    request: Request,
+    active_only: bool = True,
+    user_id: str = Depends(get_test_user_id)
+):
+    """Test endpoint for expert search with analytics tracking"""
+    return await process_expert_search(query, user_id, active_only)
 
 @router.get("/test/experts/predict/{partial_query}")
 async def test_predict_query(
     partial_query: str,
-    test_error: bool = False
+    request: Request,
+    user_id: str = Depends(get_test_user_id)
 ):
-    """Test endpoint for query predictions with analytics"""
-    try:
-        if test_error:
-            raise Exception("Test error scenario")
-        
-        logger.debug(f"Attempting prediction for partial query: {partial_query}")
-        ml_predictor = MLPredictor()
-        predictions = ml_predictor.predict(partial_query)
-        logger.debug(f"Predictions returned: {predictions}")
-        
-        scores = [1.0 - (i * 0.1) for i in range(len(predictions))]
-        
-        return PredictionResponse(
-            predictions=predictions,
-            confidence_scores=scores
-        )
-    
-    except Exception as e:
-        logger.error(f"Test Error predicting queries: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+    """Test endpoint for query prediction with analytics tracking"""
+    return await process_query_prediction(partial_query, user_id)
 
-@router.get("/test/analytics/metrics")
-async def test_get_analytics():
-    """Get test analytics data"""
-    db = DatabaseManager()
-    try:
-        performance_metrics = db.get_performance_metrics(hours=24)
-        search_metrics = db.get_search_metrics(
-            start_date="NOW() - INTERVAL '24 HOURS'",
-            end_date="NOW()",
-            search_type=['test']
-        )
-        
-        return {
-            "performance_metrics": performance_metrics,
-            "search_metrics": search_metrics,
-            "user_id": "test_user"
-        }
-        
-    except Exception as e:
-        logger.error(f"Test Error getting analytics: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-    finally:
-        db.close()
-
-@router.post("/test/record-click")
-async def test_record_click(
-    search_id: int,
-    expert_id: str = None
+# Production endpoints
+@router.get("/experts/search/{query}")
+async def search_experts(
+    query: str,
+    request: Request,
+    active_only: bool = True,
+    user_id: str = Depends(get_user_id)
 ):
-    """Test endpoint for recording clicks"""
-    db = DatabaseManager()
-    try:
-        db.record_click(search_id, expert_id)
-        return {"message": "Test click recorded successfully"}
-    except Exception as e:
-        logger.error(f"Test Error recording click: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-    finally:
-        db.close()
+    """Production endpoint for expert search with analytics tracking"""
+    return await process_expert_search(query, user_id, active_only)
+
+@router.get("/experts/predict/{partial_query}")
+async def predict_query(
+    partial_query: str,
+    request: Request,
+    user_id: str = Depends(get_user_id)
+):
+    """Production endpoint for query prediction with analytics tracking"""
+    return await process_query_prediction(partial_query, user_id)
